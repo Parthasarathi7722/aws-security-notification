@@ -1,0 +1,279 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Security Event Notification Stack with EventBridge, SQS, and Lambda'
+
+Parameters:
+  SlackWebhookUrl:
+    Type: String
+    Description: Slack Webhook URL for notifications
+    NoEcho: true
+
+  AccountName:
+    Type: String
+    Description: Name of the AWS account for notification identification
+    Default: 'Unknown Account'
+
+  WhitelistResources:
+    Type: String
+    Description: Comma-separated list of ARNs to whitelist from notifications
+    Default: ''
+
+  NotificationRetentionDays:
+    Type: Number
+    Description: Number of days to retain notifications in CloudWatch Logs
+    Default: 30
+    MinValue: 1
+    MaxValue: 365
+
+  LambdaTimeout:
+    Type: Number
+    Description: Lambda function timeout in seconds
+    Default: 15
+    MinValue: 1
+    MaxValue: 900
+
+  LambdaMemorySize:
+    Type: Number
+    Description: Lambda function memory size in MB
+    Default: 128
+    MinValue: 128
+    MaxValue: 10240
+
+  EnableGuardDuty:
+    Type: String
+    Description: Enable GuardDuty integration (true/false)
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableSecurityHub:
+    Type: String
+    Description: Enable Security Hub integration (true/false)
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableConfig:
+    Type: String
+    Description: Enable AWS Config integration (true/false)
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableECS:
+    Type: String
+    Description: Enable ECS security monitoring (true/false)
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableEKS:
+    Type: String
+    Description: Enable EKS security monitoring (true/false)
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Resources:
+  NotificationLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: NotificationLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt NotificationQueue.Arn
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeSecurityGroups
+                  - s3:GetBucketPolicy
+                  - cloudtrail:LookupEvents
+                  - guardduty:GetFindings
+                  - guardduty:ListDetectors
+                  - securityhub:GetFindings
+                  - config:GetComplianceDetailsByConfigRule
+                  - config:DescribeConfigRules
+                  - ecs:ListClusters
+                  - ecs:DescribeClusters
+                  - ecs:ListTaskDefinitions
+                  - ecs:DescribeTaskDefinition
+                  - eks:ListClusters
+                  - eks:DescribeCluster
+                Resource: '*'
+
+  NotificationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${AWS::StackName}-notification-queue
+      VisibilityTimeout: !Ref LambdaTimeout
+      MessageRetentionPeriod: 1209600  # 14 days
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt NotificationDLQ.Arn
+        maxReceiveCount: 3
+
+  NotificationDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${AWS::StackName}-notification-dlq
+      VisibilityTimeout: !Ref LambdaTimeout
+      MessageRetentionPeriod: 1209600  # 14 days
+      RedrivePolicy:
+        maxReceiveCount: 1
+
+  NotificationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-notification-lambda
+      Runtime: python3.9
+      Handler: SecOps_notification.lambda_handler
+      Role: !GetAtt NotificationLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Timeout: !Ref LambdaTimeout
+      MemorySize: !Ref LambdaMemorySize
+      Environment:
+        Variables:
+          SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
+          ACCOUNT_NAME: !Ref AccountName
+          WHITELIST_RESOURCES: !Ref WhitelistResources
+          ENABLE_GUARDDUTY: !Ref EnableGuardDuty
+          ENABLE_SECURITYHUB: !Ref EnableSecurityHub
+          ENABLE_CONFIG: !Ref EnableConfig
+          ENABLE_ECS: !Ref EnableECS
+          ENABLE_EKS: !Ref EnableEKS
+      LoggingConfig:
+        LogFormat: JSON
+        LogRetentionInDays: !Ref NotificationRetentionDays
+
+  NotificationQueueTrigger:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt NotificationQueue.Arn
+      FunctionName: !Ref NotificationLambda
+      BatchSize: 10
+      Enabled: true
+
+  SecurityEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub ${AWS::StackName}-security-events
+      Description: Rule to capture security-related events
+      EventPattern:
+        source:
+          - aws.iam
+          - aws.s3
+          - aws.ec2
+          - aws.cloudtrail
+          - aws.config
+          - aws.guardduty
+          - aws.securityhub
+          - aws.kms
+          - aws.secretsmanager
+          - aws.rds
+          - aws.dynamodb
+          - aws.redshift
+          - aws.elasticache
+          - aws.es
+          - aws.workspaces
+          - aws.organizations
+          - aws.ecs
+          - aws.eks
+        detail-type:
+          - AWS API Call via CloudTrail
+          - AWS Console Sign In via CloudTrail
+          - AWS Service Event
+        detail:
+          eventName:
+            - CreateUser
+            - DeleteUser
+            - CreateRole
+            - DeleteRole
+            - AttachRolePolicy
+            - DetachRolePolicy
+            - PutBucketPolicy
+            - DeleteBucketPolicy
+            - AuthorizeSecurityGroupIngress
+            - AuthorizeSecurityGroupEgress
+            - RevokeSecurityGroupIngress
+            - RevokeSecurityGroupEgress
+            - CreateSecurityGroup
+            - DeleteSecurityGroup
+            - StartLogging
+            - StopLogging
+            - UpdateTrail
+            - DeleteTrail
+            - StartConfigurationRecorder
+            - StopConfigurationRecorder
+            - CreateConfigRule
+            - DeleteConfigRule
+            - CreateSecret
+            - DeleteSecret
+            - CreateKey
+            - DeleteKey
+            - CreateDBInstance
+            - DeleteDBInstance
+            - CreateTable
+            - DeleteTable
+            - CreateCluster
+            - DeleteCluster
+            - CreateCacheCluster
+            - DeleteCacheCluster
+            - CreateDomain
+            - DeleteDomain
+            - CreateWorkspace
+            - DeleteWorkspace
+            - CreateAccount
+            - DeleteAccount
+            - CreateCluster
+            - DeleteCluster
+            - UpdateCluster
+            - CreateService
+            - DeleteService
+            - UpdateService
+            - RegisterTaskDefinition
+            - DeregisterTaskDefinition
+            - UpdateTaskDefinition
+            - CreateTaskSet
+            - DeleteTaskSet
+            - UpdateTaskSet
+            - CreateNodegroup
+            - DeleteNodegroup
+            - UpdateNodegroup
+            - CreateFargateProfile
+            - DeleteFargateProfile
+            - UpdateFargateProfile
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt NotificationQueue.Arn
+          Id: NotificationQueueTarget
+
+Outputs:
+  NotificationQueueUrl:
+    Description: URL of the notification queue
+    Value: !Ref NotificationQueue
+  NotificationQueueArn:
+    Description: ARN of the notification queue
+    Value: !GetAtt NotificationQueue.Arn
+  NotificationLambdaArn:
+    Description: ARN of the notification Lambda function
+    Value: !GetAtt NotificationLambda.Arn 
