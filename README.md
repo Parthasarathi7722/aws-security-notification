@@ -406,18 +406,18 @@ Ensure the following permissions are added to your Lambda execution role:
 ## **Slack Notification Format**
 Example:
 ```plaintext
-*Alert Details - Dev (385297184228)*
+*Alert Details - Dev (XXXXXXXXXXXXX)*
 * **Event Name:** ConsoleLogin
 * **Action Result:** Action Allowed
 * **Event Source:** signin.amazonaws.com
-* **Attacker:** 106.51.200.69
+* **Attacker:** 106.71.200.69
 * **Target Hostname:** us-west-2.signin.aws.amazon.com
-* **Username:** AWSReservedSSO_DevOpsAccess
+* **Username:** AWSReservedSSO_DevAccess
 * **User Type:** AssumedRole
 * **Zone:** us-west-2
-* **Principal ID:** AROAUXR5DTUA7JD4KO33I:loki@company.com
+* **Principal ID:** AROAUXXXXXXXA7JD4KO33I:loki@company.com
 * **MFA Authenticated:** false
-* **ARN:** arn:aws:sts::385297184228:assumed-role/AWSReservedSSO_DevOpsAccess/loki@company.com
+* **ARN:** arn:aws:sts::XXXXXXXXXXXXXXXXX:assumed-role/AWSReservedSSO_DevOpsAccess/loki@company.com
 * **User-Agent:** Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/132.0.0.0 Safari/537.36
 *Additional Event Details:*
 ```json
