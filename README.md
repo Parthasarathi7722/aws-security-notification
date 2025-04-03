@@ -108,8 +108,20 @@ This project provides a comprehensive security event monitoring and notification
    - AWS CLI configured with appropriate credentials
    - Slack webhook URL
    - S3 bucket for Lambda code
+  
+2. **Download and Prepare the Project**
 
-2. **Deploy the Stack**
+Download the Repository**
+1. Navigate to the [GitHub repository](https://github.com/psd/SecOps_lambda_package).
+2. Download the project as a ZIP file and extract it locally.
+
+Install Dependencies (Optional)**
+1. The project includes required dependencies (`certifi`, `requests`, `urllib3`, etc.). If any dependency is missing or needs updating, use:
+   ```bash
+   pip install -r requirements.txt -t .
+   ```
+
+3. **Deploy the Stack**
    ```bash
    # Package the Lambda function
    zip -r function.zip SecOps_notification.py certifi charset_normalizer idna requests urllib3
@@ -243,21 +255,6 @@ To remove specific events from monitoring:
    - Check cluster status
    - Review container logs
 
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Support
-
-For support, please open an issue in the GitHub repository or contact the maintainers.
 
 ---
 
@@ -441,5 +438,21 @@ Example:
    - Ensure EventBridge rules match the intended events.
    - Test events using the AWS CLI or console.
 
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Support
+
+For support, please open an issue in the GitHub repository or contact the maintainers.
 ---
 
