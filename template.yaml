@@ -2,6 +2,15 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: 'AWS Security Event Notification Stack with EventBridge, SQS, and Lambda'
 
 Parameters:
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket containing Lambda code
+
+  LambdaCodeKey:
+    Type: String
+    Description: S3 key for Lambda code
+    Default: 'function.zip'
+
   SlackWebhookUrl:
     Type: String
     Description: Slack Webhook URL for notifications
@@ -17,6 +26,11 @@ Parameters:
     Description: Comma-separated list of ARNs to whitelist from notifications
     Default: ''
 
+  CriticalEvents:
+    Type: String
+    Description: Comma-separated list of critical event names
+    Default: 'CreateUser,DeleteUser,CreateRole,DeleteRole,DeleteBucket'
+
   NotificationRetentionDays:
     Type: Number
     Description: Number of days to retain notifications in CloudWatch Logs
@@ -27,14 +41,14 @@ Parameters:
   LambdaTimeout:
     Type: Number
     Description: Lambda function timeout in seconds
-    Default: 15
+    Default: 60
     MinValue: 1
     MaxValue: 900
 
   LambdaMemorySize:
     Type: Number
     Description: Lambda function memory size in MB
-    Default: 128
+    Default: 256
     MinValue: 128
     MaxValue: 10240
 
@@ -105,19 +119,54 @@ Resources:
               - Effect: Allow
                 Action:
                   - ec2:DescribeSecurityGroups
+                  - ec2:DescribeInstances
                   - s3:GetBucketPolicy
+                  - s3:GetBucketLocation
                   - cloudtrail:LookupEvents
+                  - cloudtrail:DescribeTrails
+                Resource: '*'
+              - Effect: Allow
+                Action:
                   - guardduty:GetFindings
                   - guardduty:ListDetectors
+                  - guardduty:ListFindings
+                Resource: '*'
+              - Effect: Allow
+                Action:
                   - securityhub:GetFindings
+                  - securityhub:BatchImportFindings
+                Resource: '*'
+              - Effect: Allow
+                Action:
                   - config:GetComplianceDetailsByConfigRule
                   - config:DescribeConfigRules
+                  - config:DescribeConfigurationRecorders
+                Resource: '*'
+              - Effect: Allow
+                Action:
                   - ecs:ListClusters
                   - ecs:DescribeClusters
                   - ecs:ListTaskDefinitions
                   - ecs:DescribeTaskDefinition
+                  - ecs:ListServices
+                  - ecs:DescribeServices
+                Resource: '*'
+              - Effect: Allow
+                Action:
                   - eks:ListClusters
                   - eks:DescribeCluster
+                  - eks:ListNodegroups
+                  - eks:DescribeNodegroup
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
                 Resource: '*'
 
   NotificationQueue:
@@ -156,14 +205,25 @@ Resources:
           SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
           ACCOUNT_NAME: !Ref AccountName
           WHITELIST_RESOURCES: !Ref WhitelistResources
+          CRITICAL_EVENTS: !Ref CriticalEvents
           ENABLE_GUARDDUTY: !Ref EnableGuardDuty
           ENABLE_SECURITYHUB: !Ref EnableSecurityHub
           ENABLE_CONFIG: !Ref EnableConfig
           ENABLE_ECS: !Ref EnableECS
           ENABLE_EKS: !Ref EnableEKS
-      LoggingConfig:
-        LogFormat: JSON
-        LogRetentionInDays: !Ref NotificationRetentionDays
+          LOG_LEVEL: INFO
+          MAX_RETRIES: '3'
+          RETRY_DELAY_SECONDS: '2'
+          RATE_LIMIT_PER_MINUTE: '30'
+          MAX_SLACK_MESSAGE_LENGTH: '3000'
+      ReservedConcurrentExecutions: 5
+      DeadLetterConfig:
+        TargetArn: !GetAtt NotificationDLQ.Arn
+      Tags:
+        - Key: Application
+          Value: SecurityNotification
+        - Key: Environment
+          Value: !Ref AccountName
 
   NotificationQueueTrigger:
     Type: AWS::Lambda::EventSourceMapping

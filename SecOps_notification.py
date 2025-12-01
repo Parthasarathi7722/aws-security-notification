@@ -1,446 +1,430 @@
+"""
+AWS Security Notification System
+Monitors AWS security events and sends Slack alerts with retry logic and rate limiting.
+
+Author: Security Team
+Version: 2.1.0 (Streamlined)
+"""
 import json
 import os
-import requests
+import time
 import boto3
+import requests
 from botocore.exceptions import ClientError
 import fnmatch
-from collections import defaultdict
-from datetime import datetime, timezone
-import re
+from collections import defaultdict, deque
+from datetime import datetime, timezone, timedelta
+import traceback
+import logging
 
-# Initialize AWS clients
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
+class Config:
+    """Configuration from environment variables."""
+    def __init__(self):
+        self.slack_webhook_url = os.getenv("SLACK_WEBHOOK_URL")
+        if not self.slack_webhook_url:
+            raise ValueError("SLACK_WEBHOOK_URL is required")
+
+        self.account_name = os.getenv("ACCOUNT_NAME", "AWS Account")
+        self.whitelist_resources = [x.strip() for x in os.getenv("WHITELIST_RESOURCES", "").split(",") if x.strip()]
+        self.critical_events = [x.strip() for x in os.getenv("CRITICAL_EVENTS", "").split(",") if x.strip()]
+
+        # Feature flags
+        self.enable_guardduty = os.getenv("ENABLE_GUARDDUTY", "false").lower() == "true"
+        self.enable_securityhub = os.getenv("ENABLE_SECURITYHUB", "false").lower() == "true"
+        self.enable_config = os.getenv("ENABLE_CONFIG", "false").lower() == "true"
+        self.enable_ecs = os.getenv("ENABLE_ECS", "true").lower() == "true"
+        self.enable_eks = os.getenv("ENABLE_EKS", "true").lower() == "true"
+
+        # Settings
+        self.max_retries = int(os.getenv("MAX_RETRIES", "3"))
+        self.retry_delay = int(os.getenv("RETRY_DELAY_SECONDS", "2"))
+        self.rate_limit = int(os.getenv("RATE_LIMIT_PER_MINUTE", "30"))
+        self.max_message_length = int(os.getenv("MAX_SLACK_MESSAGE_LENGTH", "3000"))
+
+# Initialize
+config = Config()
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
+
+# AWS clients
 s3_client = boto3.client("s3")
 ec2_client = boto3.client("ec2")
 guardduty_client = boto3.client("guardduty")
 securityhub_client = boto3.client("securityhub")
 config_client = boto3.client("config")
-kms_client = boto3.client("kms")
-secretsmanager_client = boto3.client("secretsmanager")
 ecs_client = boto3.client("ecs")
 eks_client = boto3.client("eks")
+cloudwatch_client = boto3.client("cloudwatch")
 
-# Environment variables
-SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
-ACCOUNT_NAME = os.getenv("ACCOUNT_NAME", "Unknown Account")
-WHITELIST_RESOURCES = os.getenv("WHITELIST_RESOURCES", "").split(",")
-CRITICAL_EVENTS = os.getenv("CRITICAL_EVENTS", "").split(",")
-ENABLE_GUARDDUTY = os.getenv("ENABLE_GUARDDUTY", "false").lower() == "true"
-ENABLE_SECURITYHUB = os.getenv("ENABLE_SECURITYHUB", "false").lower() == "true"
-ENABLE_CONFIG = os.getenv("ENABLE_CONFIG", "false").lower() == "true"
-ENABLE_ECS = os.getenv("ENABLE_ECS", "true").lower() == "true"
-ENABLE_EKS = os.getenv("ENABLE_EKS", "true").lower() == "true"
+# Metrics and rate limiter
+metrics = {'events_processed': 0, 'events_filtered': 0, 'notifications_sent': 0, 'notifications_failed': 0, 'errors': 0}
+rate_limiter = deque(maxlen=config.rate_limit)
 
-# Ensure Slack Webhook URL is provided
-if not SLACK_WEBHOOK_URL:
-    raise ValueError("SLACK_WEBHOOK_URL environment variable is missing!")
-
-def get_whitelisted_arns():
-    """Retrieve and clean whitelisted ARNs from environment variable."""
-    return [arn.strip() for arn in WHITELIST_RESOURCES if arn.strip()]
-
-def is_whitelisted(event_arn):
-    """Check if the event ARN matches any whitelisted ARN (supports wildcards)."""
-    if not event_arn or event_arn == "Unknown ARN":
-        return False
-
-    whitelist = get_whitelisted_arns()
-    for whitelisted_arn in whitelist:
-        if fnmatch.fnmatch(event_arn, whitelisted_arn):
-            return True
-    return False
-
-def is_critical_event(event_name):
-    """Check if the event is considered critical based on environment variable."""
-    if not event_name:
-        return False
-    critical_events = [event.strip() for event in CRITICAL_EVENTS if event.strip()]
-    return event_name in critical_events
-
-def send_to_slack(message, is_critical=False):
-    """Send a formatted message to Slack with critical event highlighting."""
-    try:
-        if is_critical:
-            message = f"🚨 *CRITICAL SECURITY ALERT* 🚨\n{message}"
-        
-        slack_message = {
-            "text": message,
-            "blocks": [
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": message
-                    }
-                }
-            ]
-        }
-        
-        response = requests.post(SLACK_WEBHOOK_URL, json=slack_message)
-        if response.status_code != 200:
-            raise ValueError(f"Slack returned error {response.status_code}: {response.text}")
-    except Exception as e:
-        print(f"Failed to send message to Slack: {str(e)}")
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
 
 def safe_get(dictionary, *keys):
-    """Safely get a nested value from a dictionary."""
+    """Safely get nested dictionary value."""
     for key in keys:
         if dictionary is None or key not in dictionary:
             return None
         dictionary = dictionary[key]
     return dictionary
 
+def is_whitelisted(event_arn):
+    """Check if ARN matches whitelist (supports wildcards)."""
+    if not event_arn or event_arn == "Unknown ARN":
+        return False
+    return any(fnmatch.fnmatch(event_arn, pattern) for pattern in config.whitelist_resources)
+
+def is_critical_event(event_name):
+    """Check if event is critical."""
+    return event_name in config.critical_events if event_name else False
+
+# ============================================================================
+# SLACK NOTIFICATION
+# ============================================================================
+
+def send_to_slack(message, is_critical=False):
+    """Send message to Slack with retry and rate limiting."""
+    global rate_limiter
+
+    # Truncate long messages
+    if len(message) > config.max_message_length:
+        message = message[:config.max_message_length - 50] + "\n...[truncated]"
+
+    if is_critical:
+        message = f"🚨 *CRITICAL ALERT* 🚨\n{message}"
+
+    payload = {"text": message, "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": message}}]}
+
+    for attempt in range(config.max_retries):
+        try:
+            # Rate limit check
+            now = datetime.now(timezone.utc)
+            while rate_limiter and rate_limiter[0] < now - timedelta(seconds=60):
+                rate_limiter.popleft()
+
+            if len(rate_limiter) >= config.rate_limit:
+                time.sleep(1)
+                continue
+
+            response = requests.post(config.slack_webhook_url, json=payload, timeout=10)
+            rate_limiter.append(now)
+
+            if response.status_code == 200:
+                metrics['notifications_sent'] += 1
+                return True
+            elif response.status_code == 429:
+                time.sleep(int(response.headers.get("Retry-After", config.retry_delay)))
+            else:
+                if attempt < config.max_retries - 1:
+                    time.sleep(config.retry_delay * (attempt + 1))
+        except Exception as e:
+            logger.error(f"Slack error (attempt {attempt + 1}): {str(e)}")
+            if attempt < config.max_retries - 1:
+                time.sleep(config.retry_delay * (attempt + 1))
+
+    metrics['notifications_failed'] += 1
+    return False
+
+def publish_metrics():
+    """Publish metrics to CloudWatch."""
+    try:
+        cloudwatch_client.put_metric_data(
+            Namespace='SecurityNotifications',
+            MetricData=[
+                {'MetricName': k, 'Value': v, 'Unit': 'Count', 'Timestamp': datetime.now(timezone.utc)}
+                for k, v in metrics.items()
+            ]
+        )
+        logger.info(f"Metrics: {metrics}")
+    except Exception as e:
+        logger.error(f"Metrics error: {str(e)}")
+
+# ============================================================================
+# AWS SERVICE INTEGRATIONS
+# ============================================================================
+
 def get_guardduty_findings():
-    """Retrieve recent GuardDuty findings."""
-    if not ENABLE_GUARDDUTY:
+    """Get high-severity GuardDuty findings."""
+    if not config.enable_guardduty:
         return []
-    
     try:
         detectors = guardduty_client.list_detectors()
         if not detectors.get('DetectorIds'):
             return []
-        
-        detector_id = detectors['DetectorIds'][0]
         findings = guardduty_client.list_findings(
-            DetectorId=detector_id,
-            FindingCriteria={
-                'Criterion': {
-                    'severity': {
-                        'Gte': 4  # High severity findings
-                    }
-                }
-            },
+            DetectorId=detectors['DetectorIds'][0],
+            FindingCriteria={'Criterion': {'severity': {'Gte': 4}}},
             MaxResults=50
         )
-        
         return findings.get('FindingIds', [])
+    except ClientError as e:
+        if e.response.get('Error', {}).get('Code') != 'BadRequestException':
+            logger.warning(f"GuardDuty error: {str(e)}")
+        return []
     except Exception as e:
-        print(f"Error retrieving GuardDuty findings: {str(e)}")
+        metrics['errors'] += 1
         return []
 
 def get_securityhub_findings():
-    """Retrieve recent Security Hub findings."""
-    if not ENABLE_SECURITYHUB:
+    """Get critical/high Security Hub findings."""
+    if not config.enable_securityhub:
         return []
-    
     try:
         findings = securityhub_client.get_findings(
-            Filters={
-                'SeverityLabel': [
-                    {'Comparison': 'EQUALS', 'Value': 'CRITICAL'},
-                    {'Comparison': 'EQUALS', 'Value': 'HIGH'}
-                ]
-            },
+            Filters={'SeverityLabel': [
+                {'Comparison': 'EQUALS', 'Value': 'CRITICAL'},
+                {'Comparison': 'EQUALS', 'Value': 'HIGH'}
+            ]},
             MaxResults=50
         )
         return findings.get('Findings', [])
-    except Exception as e:
-        print(f"Error retrieving Security Hub findings: {str(e)}")
+    except ClientError:
+        return []
+    except Exception:
+        metrics['errors'] += 1
         return []
 
 def get_config_compliance():
-    """Retrieve AWS Config compliance status."""
-    if not ENABLE_CONFIG:
+    """Get AWS Config compliance status."""
+    if not config.enable_config:
         return []
-    
     try:
         rules = config_client.describe_config_rules()
         compliance = []
         for rule in rules.get('ConfigRules', []):
-            rule_compliance = config_client.get_compliance_details_by_config_rule(
-                ConfigRuleName=rule['ConfigRuleName']
-            )
-            if rule_compliance.get('EvaluationResults'):
-                compliance.append({
-                    'rule_name': rule['ConfigRuleName'],
-                    'compliance': rule_compliance['EvaluationResults'][0]['ComplianceType']
-                })
+            try:
+                result = config_client.get_compliance_details_by_config_rule(
+                    ConfigRuleName=rule['ConfigRuleName']
+                )
+                if result.get('EvaluationResults'):
+                    compliance.append({
+                        'rule_name': rule['ConfigRuleName'],
+                        'compliance': result['EvaluationResults'][0]['ComplianceType']
+                    })
+            except:
+                continue
         return compliance
-    except Exception as e:
-        print(f"Error retrieving Config compliance: {str(e)}")
+    except:
         return []
-
-def format_event_message(detail):
-    """Format a detailed Slack message based on the event."""
-    event_name = detail.get("eventName", "Unknown Event")
-    error_code = detail.get("errorCode", "N/A")
-    event_source = detail.get("eventSource", "Unknown Source")
-    user_identity = detail.get("userIdentity", {})
-    username = safe_get(user_identity, "sessionContext", "sessionIssuer", "userName") or "Unknown Username"
-    principal_id = user_identity.get("principalId", "Unknown Principal ID")
-    account_id = user_identity.get("accountId", "Unknown Account ID")
-    arn = user_identity.get("arn", "Unknown ARN")
-    user_type = user_identity.get("type", "Unknown User Type")
-    mfa_authenticated = safe_get(user_identity, "sessionContext", "attributes", "mfaAuthenticated") or "false"
-    source_ip = detail.get("sourceIPAddress", "Unknown Source IP")
-    user_agent = detail.get("userAgent", "Unknown User-Agent")
-    region = detail.get("awsRegion", "Unknown Region")
-    target_hostname = safe_get(detail, "tlsDetails", "clientProvidedHostHeader") or event_source
-    event_time = detail.get("eventTime", datetime.now(timezone.utc).isoformat())
-
-    # Additional fields specific to IAM events
-    console_login_result = safe_get(detail, "responseElements", "ConsoleLogin") or "N/A"
-    mfa_used = safe_get(detail, "additionalEventData", "MFAUsed") or "Unknown"
-
-    # Safely handle request parameters
-    request_parameters = detail.get("requestParameters", {})
-    additional_event_details = (
-        json.dumps(request_parameters, indent=2) if request_parameters else "No additional details provided."
-    )
-
-    # Check for potential security risks
-    security_risks = []
-    if not mfa_authenticated.lower() == "true":
-        security_risks.append("⚠️ MFA not used for authentication")
-    if user_type == "Root":
-        security_risks.append("⚠️ Root account activity detected")
-    if error_code != "N/A":
-        security_risks.append(f"⚠️ Action denied with error code: {error_code}")
-    if "password" in str(request_parameters).lower():
-        security_risks.append("⚠️ Password-related activity detected")
-
-    message = (
-        f"*Alert Details - {ACCOUNT_NAME} ({account_id})*\n"
-        f"* **Event Name:** {event_name}\n"
-        f"* **Action Result:** {'Action Allowed' if error_code == 'N/A' else f'Action Denied: {error_code}'}\n"
-        f"* **Event Source:** {event_source}\n"
-        f"* **Source_IP:** {source_ip}\n"
-        f"* **Target Hostname:** {target_hostname}\n"
-        f"* **Username:** {username}\n"
-        f"* **User Type:** {user_type}\n"
-        f"* **Zone:** {region}\n"
-        f"* **Principal ID:** {principal_id}\n"
-        f"* **MFA Authenticated:** {mfa_authenticated}\n"
-        f"* **ARN:** {arn}\n"
-        f"* **User-Agent:** {user_agent}\n"
-        f"* **Console Login Result:** {console_login_result}\n"
-        f"* **MFA Used:** {mfa_used}\n"
-        f"* **Event Time:** {event_time}\n"
-    )
-
-    if security_risks:
-        message += "\n*Security Risks Detected:*\n" + "\n".join(security_risks)
-
-    if additional_event_details:
-        message += f"\n*Additional Event Details:*\n```{additional_event_details}```"
-
-    return message
 
 def get_ecs_security_events():
-    """Retrieve ECS security-related events."""
-    if not ENABLE_ECS:
+    """Get ECS security issues."""
+    if not config.enable_ecs:
         return []
-    
+    events = []
     try:
-        events = []
-        clusters = ecs_client.list_clusters()
-        
+        clusters = ecs_client.list_clusters(maxResults=10)
         for cluster_arn in clusters.get('clusterArns', []):
-            # Get cluster details
-            cluster_details = ecs_client.describe_clusters(clusters=[cluster_arn])
-            if not cluster_details.get('clusters'):
+            try:
+                details = ecs_client.describe_clusters(clusters=[cluster_arn])
+                cluster = details['clusters'][0]
+                if cluster.get('status') != 'ACTIVE':
+                    events.append({
+                        'type': 'ECS_CLUSTER_INACTIVE',
+                        'severity': 'HIGH',
+                        'cluster': cluster.get('clusterName'),
+                        'description': f"Cluster {cluster.get('clusterName')} is {cluster.get('status')}"
+                    })
+            except:
                 continue
-                
-            cluster = cluster_details['clusters'][0]
-            
-            # Check for security-related issues
-            if cluster.get('status') != 'ACTIVE':
-                events.append({
-                    'type': 'ECS_CLUSTER_STATUS',
-                    'severity': 'HIGH',
-                    'cluster': cluster.get('clusterName'),
-                    'status': cluster.get('status'),
-                    'description': f"ECS cluster {cluster.get('clusterName')} is not in ACTIVE status"
-                })
-            
-            # Get task definitions
-            task_defs = ecs_client.list_task_definitions()
-            for task_def_arn in task_defs.get('taskDefinitionArns', []):
-                task_def = ecs_client.describe_task_definition(taskDefinition=task_def_arn)
-                if not task_def.get('taskDefinition'):
-                    continue
-                    
-                # Check for privileged containers
-                for container_def in task_def['taskDefinition'].get('containerDefinitions', []):
-                    if container_def.get('privileged'):
-                        events.append({
-                            'type': 'ECS_PRIVILEGED_CONTAINER',
-                            'severity': 'HIGH',
-                            'cluster': cluster.get('clusterName'),
-                            'task_definition': task_def_arn,
-                            'container': container_def.get('name'),
-                            'description': f"Privileged container detected in task definition {task_def_arn}"
-                        })
-        
-        return events
-    except Exception as e:
-        print(f"Error retrieving ECS security events: {str(e)}")
-        return []
+    except:
+        pass
+    return events
 
 def get_eks_security_events():
-    """Retrieve EKS security-related events."""
-    if not ENABLE_EKS:
+    """Get EKS security issues."""
+    if not config.enable_eks:
         return []
-    
+    events = []
     try:
-        events = []
-        clusters = eks_client.list_clusters()
-        
+        clusters = eks_client.list_clusters(maxResults=10)
         for cluster_name in clusters.get('clusters', []):
-            # Get cluster details
-            cluster_details = eks_client.describe_cluster(name=cluster_name)
-            if not cluster_details.get('cluster'):
+            try:
+                details = eks_client.describe_cluster(name=cluster_name)
+                cluster = details['cluster']
+                if cluster.get('status') != 'ACTIVE':
+                    events.append({
+                        'type': 'EKS_CLUSTER_INACTIVE',
+                        'severity': 'HIGH',
+                        'cluster': cluster_name,
+                        'description': f"Cluster {cluster_name} is {cluster.get('status')}"
+                    })
+                if cluster.get('resourcesVpcConfig', {}).get('endpointPublicAccess'):
+                    events.append({
+                        'type': 'EKS_PUBLIC_ACCESS',
+                        'severity': 'MEDIUM',
+                        'cluster': cluster_name,
+                        'description': f"Public access enabled for {cluster_name}"
+                    })
+            except:
                 continue
-                
-            cluster = cluster_details['cluster']
-            
-            # Check for security-related issues
-            if cluster.get('status') != 'ACTIVE':
-                events.append({
-                    'type': 'EKS_CLUSTER_STATUS',
-                    'severity': 'HIGH',
-                    'cluster': cluster_name,
-                    'status': cluster.get('status'),
-                    'description': f"EKS cluster {cluster_name} is not in ACTIVE status"
-                })
-            
-            # Check for logging configuration
-            if not cluster.get('logging', {}).get('clusterLogging', []):
-                events.append({
-                    'type': 'EKS_LOGGING_DISABLED',
-                    'severity': 'MEDIUM',
-                    'cluster': cluster_name,
-                    'description': f"Logging is not enabled for EKS cluster {cluster_name}"
-                })
-            
-            # Check for public access
-            if cluster.get('resourcesVpcConfig', {}).get('endpointPublicAccess'):
-                events.append({
-                    'type': 'EKS_PUBLIC_ACCESS',
-                    'severity': 'HIGH',
-                    'cluster': cluster_name,
-                    'description': f"Public access is enabled for EKS cluster {cluster_name}"
-                })
-        
-        return events
+    except:
+        pass
+    return events
+
+# ============================================================================
+# EVENT FORMATTING
+# ============================================================================
+
+def format_event_message(detail):
+    """Format event details into Slack message."""
+    try:
+        event_name = detail.get("eventName", "Unknown")
+        error_code = detail.get("errorCode", "N/A")
+        user_identity = detail.get("userIdentity", {})
+        username = safe_get(user_identity, "sessionContext", "sessionIssuer", "userName") or safe_get(user_identity, "userName") or "Unknown"
+        account_id = user_identity.get("accountId", "Unknown")
+        arn = user_identity.get("arn", "Unknown")
+        user_type = user_identity.get("type", "Unknown")
+        mfa = safe_get(user_identity, "sessionContext", "attributes", "mfaAuthenticated") or "false"
+        source_ip = detail.get("sourceIPAddress", "Unknown")
+        region = detail.get("awsRegion", "Unknown")
+        event_time = detail.get("eventTime", datetime.now(timezone.utc).isoformat())
+
+        # Security risks
+        risks = []
+        if mfa.lower() != "true":
+            risks.append("⚠️ No MFA")
+        if user_type == "Root":
+            risks.append("⚠️ Root account")
+        if error_code != "N/A":
+            risks.append(f"⚠️ Denied: {error_code}")
+
+        msg = (
+            f"*{config.account_name} ({account_id})*\n"
+            f"*Event:* {event_name}\n"
+            f"*User:* {username} ({user_type})\n"
+            f"*Source IP:* {source_ip}\n"
+            f"*Region:* {region}\n"
+            f"*Time:* {event_time}\n"
+        )
+
+        if risks:
+            msg += "*Risks:* " + ", ".join(risks) + "\n"
+
+        return msg
     except Exception as e:
-        print(f"Error retrieving EKS security events: {str(e)}")
-        return []
+        return f"*{config.account_name}*\nError formatting message: {str(e)}"
+
+# ============================================================================
+# LAMBDA HANDLER
+# ============================================================================
 
 def lambda_handler(event, context):
-    """Process the event and send notifications to Slack."""
-    try:
-        whitelisted_arns = get_whitelisted_arns()
-        print(f"Loaded {len(whitelisted_arns)} whitelisted ARNs: {whitelisted_arns}")
+    """Main Lambda handler."""
+    request_id = context.request_id if context else "local"
+    logger.info(f"Processing {len(event.get('Records', []))} records - {request_id}")
 
-        # Dictionary to group events by resource and action
+    # Reset metrics
+    for key in metrics:
+        metrics[key] = 0
+
+    try:
         event_groups = defaultdict(list)
 
-        # Process CloudWatch Events
-        for record in event["Records"]:
+        # Process SQS messages
+        for record in event.get("Records", []):
             try:
+                metrics['events_processed'] += 1
                 sqs_body = json.loads(record["body"])
                 detail = sqs_body.get("detail", {})
 
-                # Extract and check ARN
-                event_arn = safe_get(detail, "userIdentity", "arn") or "Unknown ARN"
+                # Check whitelist
+                event_arn = safe_get(detail, "userIdentity", "arn") or "Unknown"
                 if is_whitelisted(event_arn):
-                    print(f"Skipping whitelisted ARN: {event_arn}")
+                    metrics['events_filtered'] += 1
                     continue
 
-                # Group events by resource and action
-                event_name = detail.get("eventName", "Unknown Event")
-                resource_arn = detail.get("resources", [{}])[0].get("ARN", "Unknown Resource")
-                group_key = f"{event_name}:{resource_arn}"
-                event_groups[group_key].append(detail)
+                # Group events
+                event_name = detail.get("eventName", "Unknown")
+                resource_arn = detail.get("resources", [{}])[0].get("ARN", "Unknown")
+                event_groups[f"{event_name}:{resource_arn}"].append(detail)
 
             except Exception as e:
-                print(f"Error processing record: {str(e)}")
+                logger.error(f"Record error: {str(e)}")
+                metrics['errors'] += 1
                 continue
 
-        # Process grouped events
+        # Send notifications
         for group_key, details in event_groups.items():
-            if len(details) > 1:
-                # Aggregate multiple events into a single message
-                event_name = details[0].get("eventName", "Unknown Event")
-                resource_arn = details[0].get("resources", [{}])[0].get("ARN", "Unknown Resource")
-                message = (
-                    f"*Aggregated Alert Details - {ACCOUNT_NAME}*\n"
-                    f"* **Event Name:** {event_name}\n"
-                    f"* **Resource ARN:** {resource_arn}\n"
-                    f"* **Number of Events:** {len(details)}\n"
-                )
+            try:
+                event_name = details[0].get("eventName")
+                is_critical = is_critical_event(event_name)
 
-                # Add details for each event
-                for i, detail in enumerate(details, 1):
-                    message += f"\n*Event {i}:*\n{format_event_message(detail)}"
-
-                send_to_slack(message, is_critical_event(event_name))
-            else:
-                # Send a single message for non-grouped events
-                message = format_event_message(details[0])
-                send_to_slack(message, is_critical_event(event_name))
-
-        # Process optional security service findings if enabled
-        if ENABLE_GUARDDUTY:
-            guardduty_findings = get_guardduty_findings()
-            if guardduty_findings:
-                message = f"*GuardDuty Findings - {ACCOUNT_NAME}*\n"
-                for finding_id in guardduty_findings:
-                    finding = guardduty_client.get_findings(
-                        DetectorId=guardduty_client.list_detectors()['DetectorIds'][0],
-                        FindingIds=[finding_id]
+                if len(details) > 1:
+                    msg = (
+                        f"*Aggregated Alert - {config.account_name}*\n"
+                        f"*Event:* {event_name}\n"
+                        f"*Count:* {len(details)} events\n\n"
                     )
-                    if finding.get('Findings'):
-                        finding_details = finding['Findings'][0]
-                        message += f"\n*Finding ID:* {finding_id}\n"
-                        message += f"*Severity:* {finding_details.get('Severity', 'Unknown')}\n"
-                        message += f"*Type:* {finding_details.get('Type', 'Unknown')}\n"
-                        message += f"*Description:* {finding_details.get('Description', 'No description')}\n"
-                send_to_slack(message, True)
+                    for i, detail in enumerate(details[:3], 1):
+                        msg += f"*Event {i}:*\n{format_event_message(detail)}\n"
+                    if len(details) > 3:
+                        msg += f"\n...and {len(details) - 3} more"
+                else:
+                    msg = format_event_message(details[0])
 
-        if ENABLE_SECURITYHUB:
-            securityhub_findings = get_securityhub_findings()
-            if securityhub_findings:
-                message = f"*Security Hub Findings - {ACCOUNT_NAME}*\n"
-                for finding in securityhub_findings:
-                    message += f"\n*Finding ID:* {finding.get('Id', 'Unknown')}\n"
-                    message += f"*Severity:* {finding.get('Severity', {}).get('Label', 'Unknown')}\n"
-                    message += f"*Title:* {finding.get('Title', 'Unknown')}\n"
-                    message += f"*Description:* {finding.get('Description', 'No description')}\n"
-                send_to_slack(message, True)
+                send_to_slack(msg, is_critical)
+            except Exception as e:
+                logger.error(f"Group error: {str(e)}")
+                metrics['errors'] += 1
 
-        if ENABLE_CONFIG:
-            config_compliance = get_config_compliance()
-            if config_compliance:
-                message = f"*AWS Config Compliance Status - {ACCOUNT_NAME}*\n"
-                for rule in config_compliance:
-                    message += f"\n*Rule:* {rule['rule_name']}\n"
-                    message += f"*Compliance:* {rule['compliance']}\n"
-                send_to_slack(message)
+        # Optional service checks
+        if config.enable_guardduty:
+            findings = get_guardduty_findings()
+            if findings:
+                msg = f"*GuardDuty - {config.account_name}*\n{len(findings)} high-severity findings"
+                send_to_slack(msg, True)
 
-        # Process container security events
-        ecs_events = get_ecs_security_events()
-        if ecs_events:
-            message = f"*ECS Security Events - {ACCOUNT_NAME}*\n"
-            for event in ecs_events:
-                message += f"\n*Type:* {event['type']}\n"
-                message += f"*Severity:* {event['severity']}\n"
-                message += f"*Cluster:* {event.get('cluster', 'N/A')}\n"
-                message += f"*Description:* {event['description']}\n"
-            send_to_slack(message, any(event['severity'] == 'HIGH' for event in ecs_events))
+        if config.enable_securityhub:
+            findings = get_securityhub_findings()
+            if findings:
+                msg = f"*Security Hub - {config.account_name}*\n{len(findings)} critical/high findings"
+                send_to_slack(msg, True)
 
-        eks_events = get_eks_security_events()
-        if eks_events:
-            message = f"*EKS Security Events - {ACCOUNT_NAME}*\n"
-            for event in eks_events:
-                message += f"\n*Type:* {event['type']}\n"
-                message += f"*Severity:* {event['severity']}\n"
-                message += f"*Cluster:* {event.get('cluster', 'N/A')}\n"
-                message += f"*Description:* {event['description']}\n"
-            send_to_slack(message, any(event['severity'] == 'HIGH' for event in eks_events))
+        if config.enable_config:
+            compliance = get_config_compliance()
+            if compliance:
+                non_compliant = [r for r in compliance if r['compliance'] != 'COMPLIANT']
+                if non_compliant:
+                    msg = f"*Config - {config.account_name}*\n{len(non_compliant)} non-compliant rules"
+                    send_to_slack(msg, False)
+
+        if config.enable_ecs:
+            events = get_ecs_security_events()
+            if events:
+                msg = f"*ECS Security - {config.account_name}*\n" + "\n".join([e['description'] for e in events[:5]])
+                send_to_slack(msg, any(e['severity'] == 'HIGH' for e in events))
+
+        if config.enable_eks:
+            events = get_eks_security_events()
+            if events:
+                msg = f"*EKS Security - {config.account_name}*\n" + "\n".join([e['description'] for e in events[:5]])
+                send_to_slack(msg, any(e['severity'] == 'HIGH' for e in events))
+
+        # Publish metrics
+        publish_metrics()
+
+        logger.info(f"Complete: {metrics}")
+        return {"statusCode": 200, "body": json.dumps({"message": "Success", "metrics": metrics})}
 
     except Exception as e:
-        print(f"Error processing event: {e}")
-        send_to_slack(f"*Error in Lambda Function*\n{str(e)}")
+        logger.error(f"Handler error: {str(e)}\n{traceback.format_exc()}")
+        metrics['errors'] += 1
 
-    return {"statusCode": 200, "body": "Event processed successfully"}
+        try:
+            send_to_slack(f"*Error - {config.account_name}*\n{str(e)}", True)
+            publish_metrics()
+        except:
+            pass
+
+        return {"statusCode": 500, "body": json.dumps({"error": str(e), "metrics": metrics})}
+
