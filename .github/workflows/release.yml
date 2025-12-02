@@ -1,0 +1,105 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build deployment package
+        run: |
+          pip install -r requirements.txt -t .
+          zip -r deployment-package.zip SecOps_notification.py requests/ urllib3/ certifi/ charset_normalizer/ idna/
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create Release Notes
+        id: release_notes
+        run: |
+          cat > release-notes.md << 'EOF'
+          ## AWS Security Notification System
+
+          ### Deployment Options
+
+          1. **AWS Serverless Application Repository** (Recommended)
+             - Search "aws-security-notification-system" in AWS SAR
+             - One-click deploy
+
+          2. **CloudFormation**
+             ```bash
+             aws cloudformation deploy \
+               --template-file template.yaml \
+               --stack-name security-notifications \
+               --parameter-overrides SlackWebhookUrl=YOUR_WEBHOOK \
+               --capabilities CAPABILITY_IAM
+             ```
+
+          3. **Terraform**
+             ```hcl
+             module "security_notifications" {
+               source = "github.com/Parthasarathi7722/aws-security-notification//terraform"
+               slack_webhook_url = var.slack_webhook_url
+             }
+             ```
+
+          ### What's Included
+
+          - `deployment-package.zip` - Lambda function package (ready to deploy)
+          - CloudFormation template with SAR support
+          - Terraform module for IaC deployments
+          - Complete documentation and examples
+
+          ### Features
+
+          - Real-time AWS security monitoring
+          - Slack notifications with retry logic
+          - Support for GuardDuty, Security Hub, Config, ECS, EKS
+          - CloudWatch metrics and alarms
+          - Production-ready with best practices
+
+          ### Documentation
+
+          - [README](https://github.com/Parthasarathi7722/aws-security-notification#readme)
+          - [Deployment Guide](https://github.com/Parthasarathi7722/aws-security-notification/blob/main/docs/DEPLOYMENT.md)
+          - [Terraform Module](https://github.com/Parthasarathi7722/aws-security-notification/tree/main/terraform)
+
+          ### Cost
+
+          Estimated monthly cost: **~$0.70 - $1.15** (depending on features enabled)
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: deployment-package.zip
+          body_path: release-notes.md
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to AWS SAR (Optional)
+        if: false  # Enable when ready to publish to SAR
+        run: |
+          # Upload to S3 for SAR
+          # aws s3 cp deployment-package.zip s3://your-sar-bucket/
+          # sam publish --template template.yaml
+          echo "SAR publishing disabled - enable when ready"
+

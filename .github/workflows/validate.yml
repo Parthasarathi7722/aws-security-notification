@@ -1,0 +1,151 @@
+name: Validate and Test
+          terraform validate
+          cd examples/${{ matrix.example }}
+        run: |
+      - name: Terraform Validate
+
+          terraform init -backend=false
+          cd examples/${{ matrix.example }}
+        run: |
+      - name: Terraform Init
+
+          echo "dummy" > function.zip
+        run: |
+      - name: Create dummy deployment package
+
+          terraform_version: 1.6.0
+        with:
+        uses: hashicorp/setup-terraform@v3
+      - name: Setup Terraform
+
+      - uses: actions/checkout@v4
+    steps:
+        example: [basic, advanced]
+      matrix:
+    strategy:
+    needs: [validate-terraform]
+    runs-on: ubuntu-latest
+    name: Test Terraform Examples
+  test-examples:
+
+          retention-days: 7
+          path: function.zip
+          name: deployment-package
+        with:
+        uses: actions/upload-artifact@v4
+      - name: Upload artifact
+
+          fi
+            echo "Warning: Package size exceeds 50MB"
+          if [ $(stat -f%z function.zip) -gt 52428800 ]; then
+          echo "Package size: $SIZE"
+          SIZE=$(du -h function.zip | cut -f1)
+        run: |
+      - name: Check package size
+
+          zip -r function.zip SecOps_notification.py requests/ urllib3/ certifi/ charset_normalizer/ idna/
+          pip install -r requirements.txt -t .
+        run: |
+      - name: Build package
+
+          python-version: '3.11'
+        with:
+        uses: actions/setup-python@v5
+      - name: Set up Python
+
+      - uses: actions/checkout@v4
+    steps:
+    needs: [validate-python]
+    runs-on: ubuntu-latest
+    name: Build Deployment Package
+  build-package:
+
+          soft_fail: true
+          framework: cloudformation,terraform
+          directory: .
+        with:
+        uses: bridgecrewio/checkov-action@master
+      - name: Run Checkov (IaC Security)
+
+      - uses: actions/checkout@v4
+    steps:
+    runs-on: ubuntu-latest
+    name: Security Scan
+  security-scan:
+
+          terraform validate
+          cd terraform
+        run: |
+      - name: Terraform Validate
+
+          terraform init -backend=false
+          cd terraform
+        run: |
+      - name: Terraform Init
+
+          terraform fmt -check -recursive
+          cd terraform
+        run: |
+      - name: Terraform Format Check
+
+          terraform_version: 1.6.0
+        with:
+        uses: hashicorp/setup-terraform@v3
+      - name: Setup Terraform
+
+      - uses: actions/checkout@v4
+    steps:
+    runs-on: ubuntu-latest
+    name: Validate Terraform
+  validate-terraform:
+
+          python -m py_compile SecOps_notification.py
+        run: |
+      - name: Check syntax
+
+          pylint SecOps_notification.py --disable=C0114,C0116,W0703 --max-line-length=120 || true
+        run: |
+      - name: Lint Python code
+
+          pip install pylint requests boto3
+          python -m pip install --upgrade pip
+        run: |
+      - name: Install dependencies
+
+          python-version: '3.11'
+        with:
+        uses: actions/setup-python@v5
+      - name: Set up Python
+
+      - uses: actions/checkout@v4
+    steps:
+    runs-on: ubuntu-latest
+    name: Validate Python Code
+  validate-python:
+
+            --template-body file://template.yaml
+          aws cloudformation validate-template \
+        run: |
+      - name: Validate CloudFormation Template
+
+          aws-region: us-east-1
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        with:
+        uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS Credentials
+
+      - uses: actions/checkout@v4
+    steps:
+    runs-on: ubuntu-latest
+    name: Validate CloudFormation
+  validate-cloudformation:
+jobs:
+
+    branches: [ main ]
+  pull_request:
+    branches: [ main, develop ]
+  push:
+on:
+
+

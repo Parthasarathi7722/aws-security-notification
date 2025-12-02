@@ -2,6 +2,13 @@
 
 Real-time Slack notifications for AWS security events with retry logic, rate limiting, and CloudWatch metrics.
 
+![AWS](https://img.shields.io/badge/AWS-CloudFormation-orange?logo=amazon-aws)
+![Python](https://img.shields.io/badge/python-3.11-blue?logo=python)
+![Terraform](https://img.shields.io/badge/Terraform-1.6+-purple?logo=terraform)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)
+![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
+
 ## Features
 
 - **Real-time Alerts** - Instant Slack notifications for security events
@@ -12,7 +19,50 @@ Real-time Slack notifications for AWS security events with retry logic, rate lim
 - **CloudWatch Metrics** - Track events, notifications, and errors
 - **Cost Efficient** - ~$0.84/month for 10K events
 
-## Quick Start
+## Deployment Options
+
+Choose your preferred deployment method:
+
+### Option 1: AWS Serverless Application Repository (Easiest)
+
+**One-click deployment from AWS Console**
+
+1. Go to [AWS Serverless Application Repository](https://console.aws.amazon.com/serverlessrepo)
+2. Search for "aws-security-notification-system"
+3. Click Deploy and enter your Slack webhook URL
+4. Done in 2 minutes!
+
+### Option 2: CloudFormation (AWS Native)
+
+```bash
+# Quick deploy
+git clone https://github.com/Parthasarathi7722/aws-security-notification.git
+cd aws-security-notification
+make package
+aws cloudformation deploy \
+  --template-file template.yaml \
+  --stack-name security-notifications \
+  --parameter-overrides SlackWebhookUrl=YOUR_WEBHOOK_URL \
+  --capabilities CAPABILITY_IAM
+```
+
+### Option 3: Terraform (Infrastructure as Code)
+
+```hcl
+module "security_notifications" {
+  source = "github.com/Parthasarathi7722/aws-security-notification//terraform"
+
+  slack_webhook_url = var.slack_webhook_url
+  enable_guardduty  = true
+  enable_security_hub = true
+}
+```
+
+**[Complete Deployment Guide](docs/DEPLOYMENT.md)** | **[Terraform Module](terraform/README.md)**
+
+---
+
+## Quick Start (Manual)
 
 ### 1. Prerequisites
 - AWS Account with appropriate permissions

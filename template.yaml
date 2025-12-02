@@ -1,6 +1,92 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'AWS Security Event Notification Stack with EventBridge, SQS, and Lambda'
 
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: aws-security-notification-system
+    Description: |
+      Real-time AWS security monitoring and Slack notifications for IAM, S3, EC2,
+      CloudTrail, KMS, Secrets Manager, GuardDuty, Security Hub, Config, ECS, and EKS.
+      Production-ready with comprehensive error handling and retry logic.
+    Author: ParthaDevSec
+    SpdxLicenseId: MIT
+    LicenseUrl: LICENSE
+    ReadmeUrl: README.md
+    Labels:
+      - security
+      - notifications
+      - slack
+      - cloudwatch
+      - iam
+      - compliance
+      - monitoring
+      - lambda
+      - serverless
+    HomePageUrl: https://github.com/Parthasarathi7722/aws-security-notification
+    SemanticVersion: 1.0.0
+    SourceCodeUrl: https://github.com/Parthasarathi7722/aws-security-notification
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Deployment Configuration"
+        Parameters:
+          - LambdaCodeBucket
+          - LambdaCodeKey
+      - Label:
+          default: "Required Configuration"
+        Parameters:
+          - SlackWebhookUrl
+          - AccountName
+      - Label:
+          default: "Optional Filtering"
+        Parameters:
+          - WhitelistResources
+          - CriticalEvents
+      - Label:
+          default: "Optional Services (Enable as needed)"
+        Parameters:
+          - EnableGuardDuty
+          - EnableSecurityHub
+          - EnableConfig
+          - EnableECS
+          - EnableEKS
+      - Label:
+          default: "Advanced Settings"
+        Parameters:
+          - NotificationRetentionDays
+          - LambdaTimeout
+          - LambdaMemorySize
+    ParameterLabels:
+      LambdaCodeBucket:
+        default: "S3 Bucket for Lambda Code"
+      LambdaCodeKey:
+        default: "S3 Key for Lambda Package"
+      SlackWebhookUrl:
+        default: "Slack Webhook URL"
+      AccountName:
+        default: "AWS Account Name"
+      WhitelistResources:
+        default: "Whitelisted Resource ARNs"
+      CriticalEvents:
+        default: "Critical Event Names"
+      EnableGuardDuty:
+        default: "Enable GuardDuty Monitoring"
+      EnableSecurityHub:
+        default: "Enable Security Hub Monitoring"
+      EnableConfig:
+        default: "Enable AWS Config Monitoring"
+      EnableECS:
+        default: "Enable ECS Monitoring"
+      EnableEKS:
+        default: "Enable EKS Monitoring"
+      NotificationRetentionDays:
+        default: "Log Retention (Days)"
+      LambdaTimeout:
+        default: "Lambda Timeout (Seconds)"
+      LambdaMemorySize:
+        default: "Lambda Memory (MB)"
+
 Parameters:
   LambdaCodeBucket:
     Type: String
