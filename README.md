@@ -232,6 +232,271 @@ aws lambda update-function-configuration \
 - Issues: Check CloudWatch Logs
 - Questions: Review troubleshooting section
 
+## Current Capabilities
+
+### Monitored AWS Services
+
+**Always Active:**
+- **IAM** - User/role creation, deletion, policy changes
+- **S3** - Bucket policy modifications, access changes
+- **EC2** - Security group modifications, ingress/egress rules
+- **CloudTrail** - Trail configuration changes, logging status
+- **KMS** - Key creation, deletion, policy changes
+- **Secrets Manager** - Secret creation, deletion, rotation
+
+**Optional (Feature Flags):**
+- **GuardDuty** - High-severity threat findings (enable_guardduty=true)
+- **Security Hub** - Critical/high security findings (enable_securityhub=true)
+- **AWS Config** - Compliance rule violations (enable_config=true)
+- **ECS** - Cluster status, privileged containers (enable_ecs=true)
+- **EKS** - Cluster status, public access, logging (enable_eks=true)
+
+### Security Checks Performed
+
+**Identity & Access Management:**
+- Root account usage detection
+- MFA authentication status
+- User and role modifications
+- Policy attachments/detachments
+- Permission boundary changes
+
+**Network Security:**
+- Security group rule changes (0.0.0.0/0 detection)
+- VPC configuration modifications
+- Network ACL changes
+- Public access configurations
+
+**Data Security:**
+- S3 bucket policy changes
+- Encryption status modifications
+- Public access block changes
+- KMS key policy updates
+- Secret rotation status
+
+**Compliance & Configuration:**
+- Config rule compliance status
+- Security Hub findings
+- GuardDuty threat detections
+- Resource configuration changes
+
+**Container Security:**
+- ECS privileged container detection
+- EKS public endpoint exposure
+- EKS logging configuration
+- Container image vulnerabilities (via Security Hub)
+
+### Alert Features
+
+**Notification Capabilities:**
+- Real-time Slack notifications
+- Critical alert highlighting
+- Event aggregation (reduce alert fatigue)
+- Retry logic (3 attempts with exponential backoff)
+- Rate limiting (30 messages/minute)
+- Message truncation for long events
+
+**Filtering & Customization:**
+- Whitelist support with wildcard patterns
+- Critical event classification
+- Resource-based filtering
+- Event type filtering
+- Account-specific naming
+
+## Adding New Security Checks
+
+### Quick Guide
+
+To add a new AWS service or security check:
+
+#### 1. Add AWS Client (if new service)
+```python
+# In SecOps_notification.py initialization section
+new_service_client = boto3.client("new-service")
+```
+
+#### 2. Create Check Function
+```python
+def get_newservice_security_events():
+    """Get NewService security issues."""
+    if not config.enable_newservice:  # Add feature flag
+        return []
+    
+    events = []
+    try:
+        # Query the service
+        response = new_service_client.describe_resources()
+        
+        # Check for security issues
+        for resource in response.get('Resources', []):
+            if resource.get('SecurityIssue'):
+                events.append({
+                    'type': 'NEWSERVICE_ISSUE',
+                    'severity': 'HIGH',
+                    'resource': resource.get('ResourceId'),
+                    'description': f"Security issue detected in {resource.get('ResourceId')}"
+                })
+        
+        return events
+    except ClientError as e:
+        logger.error(f"Error checking NewService: {str(e)}")
+        return []
+    except Exception as e:
+        metrics['errors'] += 1
+        return []
+```
+
+#### 3. Add to Lambda Handler
+```python
+# In lambda_handler function, add:
+if config.enable_newservice:
+    newservice_events = get_newservice_security_events()
+    if newservice_events:
+        msg = f"*NewService Security - {config.account_name}*\n"
+        for event in newservice_events:
+            msg += f"\n{event['description']}"
+        send_to_slack(msg, any(e['severity'] == 'HIGH' for e in newservice_events))
+```
+
+#### 4. Add Environment Variable
+```python
+# In Config class:
+self.enable_newservice = os.getenv("ENABLE_NEWSERVICE", "false").lower() == "true"
+```
+
+#### 5. Update CloudFormation
+```yaml
+# In template.yaml Parameters section:
+EnableNewService:
+  Type: String
+  Description: Enable NewService monitoring (true/false)
+  Default: 'false'
+  AllowedValues:
+    - 'true'
+    - 'false'
+
+# In Lambda Environment Variables:
+ENABLE_NEWSERVICE: !Ref EnableNewService
+```
+
+#### 6. Update IAM Permissions
+```yaml
+# In NotificationLambdaPolicy:
+- Effect: Allow
+  Action:
+    - newservice:DescribeResources
+    - newservice:ListResources
+  Resource: '*'
+```
+
+### Example: Adding RDS Monitoring
+
+Here's a complete example for adding RDS database monitoring:
+
+```python
+# 1. Add client
+rds_client = boto3.client("rds")
+
+# 2. Create check function
+def get_rds_security_events():
+    """Get RDS security issues."""
+    if not config.enable_rds:
+        return []
+    
+    events = []
+    try:
+        # Check for public databases
+        response = rds_client.describe_db_instances()
+        for db in response.get('DBInstances', []):
+            if db.get('PubliclyAccessible'):
+                events.append({
+                    'type': 'RDS_PUBLIC_ACCESS',
+                    'severity': 'HIGH',
+                    'database': db.get('DBInstanceIdentifier'),
+                    'description': f"Database {db.get('DBInstanceIdentifier')} is publicly accessible"
+                })
+            
+            # Check for unencrypted databases
+            if not db.get('StorageEncrypted'):
+                events.append({
+                    'type': 'RDS_UNENCRYPTED',
+                    'severity': 'HIGH',
+                    'database': db.get('DBInstanceIdentifier'),
+                    'description': f"Database {db.get('DBInstanceIdentifier')} is not encrypted"
+                })
+        
+        return events
+    except Exception as e:
+        logger.error(f"RDS check error: {str(e)}")
+        return []
+
+# 3. Add to lambda_handler
+if config.enable_rds:
+    rds_events = get_rds_security_events()
+    if rds_events:
+        msg = f"*RDS Security - {config.account_name}*\n"
+        for event in rds_events:
+            msg += f"\n{event['description']}"
+        send_to_slack(msg, any(e['severity'] == 'HIGH' for e in rds_events))
+```
+
+### Adding EventBridge Rules
+
+To monitor new event types, update the EventBridge rule in `template.yaml`:
+
+```yaml
+SecurityEventRule:
+  Properties:
+    EventPattern:
+      source:
+        - aws.rds  # Add new service
+      detail-type:
+        - AWS API Call via CloudTrail
+      detail:
+        eventName:
+          - CreateDBInstance
+          - DeleteDBInstance
+          - ModifyDBInstance
+```
+
+### Testing New Checks
+
+1. **Test locally** (if possible):
+```python
+# Create test script
+if __name__ == "__main__":
+    events = get_newservice_security_events()
+    print(f"Found {len(events)} security issues")
+    for event in events:
+        print(f"  - {event['description']}")
+```
+
+2. **Deploy and test**:
+```bash
+# Update Lambda
+make update BUCKET=your-bucket
+
+# Trigger test event
+aws newservice create-resource --name test-resource
+
+# Check CloudWatch Logs
+make logs
+```
+
+3. **Verify Slack notification** appears with expected format
+
+### Best Practices for New Checks
+
+1. **Use feature flags** - Always make new checks optional via environment variables
+2. **Handle errors gracefully** - Catch exceptions and log them
+3. **Track metrics** - Increment error counters on failures
+4. **Log appropriately** - Use logger.info/warning/error
+5. **Set severity correctly** - HIGH for immediate action, MEDIUM for review
+6. **Provide context** - Include resource IDs, account info, timestamps
+7. **Avoid rate limits** - Use pagination, respect API limits
+8. **Test thoroughly** - Verify with real AWS resources
+9. **Document changes** - Update README with new capabilities
+10. **Update IAM policies** - Add minimal required permissions
+
 ## License
 
 MIT License - See LICENSE file

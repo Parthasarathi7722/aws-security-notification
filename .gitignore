@@ -1,0 +1,54 @@
+# IDE and Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# AWS and Deployment
+*.zip
+function.zip
+.aws-sam/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+verification.txt
+*.pyc
+cleanup.sh
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Distribution / packaging
+build/
+dist/
+*.egg
+
