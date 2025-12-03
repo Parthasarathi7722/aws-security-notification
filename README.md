@@ -19,20 +19,48 @@ Real-time Slack notifications for AWS security events with retry logic, rate lim
 - **CloudWatch Metrics** - Track events, notifications, and errors
 - **Cost Efficient** - ~$0.84/month for 10K events
 
-## Deployment Options
+## Distribution Options
 
-Choose your preferred deployment method:
+This project is available through three supported methods:
+- **Python Package**: Use the core module in your own projects or custom runners
+- **CloudFormation**: AWS-native deployment via a single template
+- **Terraform**: Full infrastructure as code module, with examples
 
-### Option 1: AWS Serverless Application Repository (Easiest)
+---
 
-**One-click deployment from AWS Console**
+## Option 1: Python Package (Library Use)
 
-1. Go to [AWS Serverless Application Repository](https://console.aws.amazon.com/serverlessrepo)
-2. Search for "aws-security-notification-system"
-3. Click Deploy and enter your Slack webhook URL
-4. Done in 2 minutes!
+Install locally from source:
 
-### Option 2: CloudFormation (AWS Native)
+```bash
+# From repository root
+pip install .
+```
+
+Or install directly from GitHub (without cloning):
+
+```bash
+pip install "git+https://github.com/Parthasarathi7722/aws-security-notification.git#egg=aws_security_notification"
+```
+
+Use in your own runner:
+
+```python
+from aws_security_notification import lambda_handler
+
+# Example local invocation
+event = {"Records": []}
+resp = lambda_handler(event, context=None)
+print(resp)
+```
+
+Notes:
+- The package exports the Lambda handler and core logic for reuse.
+- For local runs, you must set environment variables (SLACK_WEBHOOK_URL, etc.).
+
+---
+
+## Option 2: CloudFormation (AWS Native)
 
 ```bash
 # Quick deploy
@@ -46,19 +74,23 @@ aws cloudformation deploy \
   --capabilities CAPABILITY_IAM
 ```
 
-### Option 3: Terraform (Infrastructure as Code)
+For advanced parameters and usage, see the full Configuration section below.
+
+---
+
+## Option 3: Terraform (Infrastructure as Code)
 
 ```hcl
 module "security_notifications" {
   source = "github.com/Parthasarathi7722/aws-security-notification//terraform"
 
-  slack_webhook_url = var.slack_webhook_url
-  enable_guardduty  = true
+  slack_webhook_url   = var.slack_webhook_url
+  enable_guardduty    = true
   enable_security_hub = true
 }
 ```
 
-**[Complete Deployment Guide](docs/DEPLOYMENT.md)** | **[Terraform Module](terraform/README.md)**
+See the **Terraform Module** docs: `terraform/README.md` and examples under `examples/`.
 
 ---
 
@@ -276,10 +308,23 @@ aws lambda update-function-configuration \
   --environment Variables="{...,CRITICAL_EVENTS=CreateUser;DeleteUser;DeleteRole}"
 ```
 
+## Deployment Guide and Examples
+
+- Detailed steps: `docs/DEPLOYMENT.md`
+- Terraform module: `terraform/README.md`
+- Examples: `examples/basic` and `examples/advanced`
+
+## Discoverability (Without AWS SAR)
+
+- Publish GitHub releases with attached `function.zip` for easy download
+- Include CloudFormation commands in release notes
+- Use GitHub topics: `aws-security`, `slack-notifications`, `serverless`, `cloudformation`, `terraform`, `lambda`
+- Provide a short README intro and badges at the top (already included)
+
 ## Support
 
-- Documentation: This README
-- Issues: Check CloudWatch Logs
+- Documentation: This README and `docs/DEPLOYMENT.md`
+- Issues: GitHub Issues
 - Questions: Review troubleshooting section
 
 ## Current Capabilities
@@ -556,5 +601,4 @@ MIT License - See LICENSE file
 **Version**: 2.1.0 (Streamlined)  
 **Status**: Production Ready  
 **Setup Time**: 5-10 minutes  
-**Monthly Cost**: <$1  
-
+**Monthly Cost**: <$1

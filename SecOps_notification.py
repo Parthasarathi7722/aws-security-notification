@@ -38,6 +38,13 @@ class Config:
         self.enable_config = os.getenv("ENABLE_CONFIG", "false").lower() == "true"
         self.enable_ecs = os.getenv("ENABLE_ECS", "true").lower() == "true"
         self.enable_eks = os.getenv("ENABLE_EKS", "true").lower() == "true"
+        self.enable_rds = os.getenv("ENABLE_RDS", "true").lower() == "true"
+        self.enable_lambda_checks = os.getenv("ENABLE_LAMBDA_CHECKS", "true").lower() == "true"
+        self.enable_iam_checks = os.getenv("ENABLE_IAM_CHECKS", "true").lower() == "true"
+        self.enable_s3_checks = os.getenv("ENABLE_S3_CHECKS", "true").lower() == "true"
+        self.enable_cloudtrail_checks = os.getenv("ENABLE_CLOUDTRAIL_CHECKS", "true").lower() == "true"
+        self.enable_kms_checks = os.getenv("ENABLE_KMS_CHECKS", "true").lower() == "true"
+        self.enable_secrets_checks = os.getenv("ENABLE_SECRETS_CHECKS", "true").lower() == "true"
 
         # Settings
         self.max_retries = int(os.getenv("MAX_RETRIES", "3"))
@@ -59,6 +66,12 @@ config_client = boto3.client("config")
 ecs_client = boto3.client("ecs")
 eks_client = boto3.client("eks")
 cloudwatch_client = boto3.client("cloudwatch")
+rds_client = boto3.client("rds")
+lambda_client = boto3.client("lambda")
+iam_client = boto3.client("iam")
+kms_client = boto3.client("kms")
+cloudtrail_client = boto3.client("cloudtrail")
+secretsmanager_client = boto3.client("secretsmanager")
 
 # Metrics and rate limiter
 metrics = {'events_processed': 0, 'events_filtered': 0, 'notifications_sent': 0, 'notifications_failed': 0, 'errors': 0}
@@ -270,6 +283,370 @@ def get_eks_security_events():
         pass
     return events
 
+def get_rds_security_events():
+    """Get RDS security issues - CRITICAL."""
+    if not config.enable_rds:
+        return []
+    events = []
+    try:
+        # Check RDS instances
+        response = rds_client.describe_db_instances(MaxRecords=50)
+        for db in response.get('DBInstances', []):
+            db_id = db.get('DBInstanceIdentifier')
+
+            # Critical: Public access
+            if db.get('PubliclyAccessible'):
+                events.append({
+                    'type': 'RDS_PUBLIC_ACCESS',
+                    'severity': 'CRITICAL',
+                    'resource': db_id,
+                    'description': f"CRITICAL: Database {db_id} is publicly accessible"
+                })
+
+            # Critical: No encryption
+            if not db.get('StorageEncrypted'):
+                events.append({
+                    'type': 'RDS_UNENCRYPTED',
+                    'severity': 'CRITICAL',
+                    'resource': db_id,
+                    'description': f"CRITICAL: Database {db_id} storage is not encrypted"
+                })
+
+            # High: No automated backups
+            if db.get('BackupRetentionPeriod', 0) == 0:
+                events.append({
+                    'type': 'RDS_NO_BACKUPS',
+                    'severity': 'HIGH',
+                    'resource': db_id,
+                    'description': f"Database {db_id} has no automated backups enabled"
+                })
+
+            # High: Deletion protection disabled
+            if not db.get('DeletionProtection', False):
+                events.append({
+                    'type': 'RDS_NO_DELETE_PROTECTION',
+                    'severity': 'HIGH',
+                    'resource': db_id,
+                    'description': f"Database {db_id} has deletion protection disabled"
+                })
+    except Exception as e:
+        logger.error(f"RDS check error: {str(e)}")
+        metrics['errors'] += 1
+    return events
+
+def get_lambda_security_events():
+    """Get Lambda security issues - CRITICAL."""
+    if not config.enable_lambda_checks:
+        return []
+    events = []
+    try:
+        paginator = lambda_client.get_paginator('list_functions')
+        for page in paginator.paginate(MaxItems=100):
+            for func in page.get('Functions', []):
+                func_name = func.get('FunctionName')
+
+                try:
+                    # Check function policy for public access
+                    policy = lambda_client.get_policy(FunctionName=func_name)
+                    policy_doc = json.loads(policy['Policy'])
+                    for statement in policy_doc.get('Statement', []):
+                        if statement.get('Principal') == '*' or statement.get('Principal', {}).get('AWS') == '*':
+                            events.append({
+                                'type': 'LAMBDA_PUBLIC_POLICY',
+                                'severity': 'CRITICAL',
+                                'resource': func_name,
+                                'description': f"CRITICAL: Lambda {func_name} has public policy allowing anyone to invoke"
+                            })
+                except ClientError as e:
+                    if e.response.get('Error', {}).get('Code') != 'ResourceNotFoundException':
+                        pass  # Function has no policy, which is OK
+
+                # High: Environment variables without encryption
+                if func.get('Environment', {}).get('Variables'):
+                    if not func.get('KMSKeyArn'):
+                        events.append({
+                            'type': 'LAMBDA_UNENCRYPTED_ENV',
+                            'severity': 'HIGH',
+                            'resource': func_name,
+                            'description': f"Lambda {func_name} has environment variables but no KMS encryption"
+                        })
+
+                # Medium: VPC without security
+                if func.get('VpcConfig') and func.get('VpcConfig', {}).get('VpcId'):
+                    if not func.get('VpcConfig', {}).get('SecurityGroupIds'):
+                        events.append({
+                            'type': 'LAMBDA_NO_SG',
+                            'severity': 'MEDIUM',
+                            'resource': func_name,
+                            'description': f"Lambda {func_name} in VPC but no security groups"
+                        })
+    except Exception as e:
+        logger.error(f"Lambda check error: {str(e)}")
+        metrics['errors'] += 1
+    return events
+
+def get_iam_security_events():
+    """Get IAM security issues - CRITICAL."""
+    if not config.enable_iam_checks:
+        return []
+    events = []
+    try:
+        # Check for users without MFA
+        paginator = iam_client.get_paginator('list_users')
+        for page in paginator.paginate(MaxItems=100):
+            for user in page.get('Users', []):
+                username = user.get('UserName')
+                try:
+                    mfa = iam_client.list_mfa_devices(UserName=username)
+                    if not mfa.get('MFADevices'):
+                        # Check if user has console access
+                        try:
+                            login_profile = iam_client.get_login_profile(UserName=username)
+                            events.append({
+                                'type': 'IAM_NO_MFA',
+                                'severity': 'HIGH',
+                                'resource': username,
+                                'description': f"User {username} has console access but no MFA enabled"
+                            })
+                        except ClientError:
+                            pass  # No console access
+                except Exception:
+                    pass
+
+        # Check for overly permissive policies
+        policies = iam_client.list_policies(Scope='Local', MaxItems=50)
+        for policy in policies.get('Policies', []):
+            try:
+                policy_version = iam_client.get_policy_version(
+                    PolicyArn=policy['Arn'],
+                    VersionId=policy['DefaultVersionId']
+                )
+                doc = policy_version['PolicyVersion']['Document']
+                for statement in doc.get('Statement', []):
+                    # Check for admin access
+                    if statement.get('Effect') == 'Allow':
+                        actions = statement.get('Action', [])
+                        if isinstance(actions, str):
+                            actions = [actions]
+                        if '*' in actions or 'iam:*' in actions:
+                            resources = statement.get('Resource', [])
+                            if isinstance(resources, str):
+                                resources = [resources]
+                            if '*' in resources:
+                                events.append({
+                                    'type': 'IAM_ADMIN_POLICY',
+                                    'severity': 'HIGH',
+                                    'resource': policy['PolicyName'],
+                                    'description': f"Policy {policy['PolicyName']} grants admin access (*:* on *)"
+                                })
+            except Exception:
+                pass
+
+        # Check for access keys older than 90 days
+        for page in paginator.paginate(MaxItems=100):
+            for user in page.get('Users', []):
+                username = user.get('UserName')
+                try:
+                    keys = iam_client.list_access_keys(UserName=username)
+                    for key in keys.get('AccessKeyMetadata', []):
+                        if key.get('Status') == 'Active':
+                            age_days = (datetime.now(timezone.utc) - key['CreateDate']).days
+                            if age_days > 90:
+                                events.append({
+                                    'type': 'IAM_OLD_ACCESS_KEY',
+                                    'severity': 'MEDIUM',
+                                    'resource': f"{username}/{key['AccessKeyId']}",
+                                    'description': f"Access key for {username} is {age_days} days old (>90 days)"
+                                })
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.error(f"IAM check error: {str(e)}")
+        metrics['errors'] += 1
+    return events
+
+def get_s3_security_events():
+    """Get S3 security issues - CRITICAL."""
+    if not config.enable_s3_checks:
+        return []
+    events = []
+    try:
+        buckets = s3_client.list_buckets().get('Buckets', [])
+        for bucket in buckets[:50]:  # Limit to 50 buckets
+            bucket_name = bucket['Name']
+            try:
+                # Check public access block
+                try:
+                    public_block = s3_client.get_public_access_block(Bucket=bucket_name)
+                    config_data = public_block.get('PublicAccessBlockConfiguration', {})
+                    if not all([
+                        config_data.get('BlockPublicAcls'),
+                        config_data.get('IgnorePublicAcls'),
+                        config_data.get('BlockPublicPolicy'),
+                        config_data.get('RestrictPublicBuckets')
+                    ]):
+                        events.append({
+                            'type': 'S3_PUBLIC_ACCESS_ALLOWED',
+                            'severity': 'CRITICAL',
+                            'resource': bucket_name,
+                            'description': f"CRITICAL: Bucket {bucket_name} does not block all public access"
+                        })
+                except ClientError as e:
+                    if e.response.get('Error', {}).get('Code') == 'NoSuchPublicAccessBlockConfiguration':
+                        events.append({
+                            'type': 'S3_NO_PUBLIC_BLOCK',
+                            'severity': 'CRITICAL',
+                            'resource': bucket_name,
+                            'description': f"CRITICAL: Bucket {bucket_name} has no public access block configured"
+                        })
+
+                # Check encryption
+                try:
+                    encryption = s3_client.get_bucket_encryption(Bucket=bucket_name)
+                except ClientError as e:
+                    if e.response.get('Error', {}).get('Code') == 'ServerSideEncryptionConfigurationNotFoundError':
+                        events.append({
+                            'type': 'S3_NO_ENCRYPTION',
+                            'severity': 'HIGH',
+                            'resource': bucket_name,
+                            'description': f"Bucket {bucket_name} has no encryption enabled"
+                        })
+
+                # Check versioning
+                versioning = s3_client.get_bucket_versioning(Bucket=bucket_name)
+                if versioning.get('Status') != 'Enabled':
+                    events.append({
+                        'type': 'S3_NO_VERSIONING',
+                        'severity': 'MEDIUM',
+                        'resource': bucket_name,
+                        'description': f"Bucket {bucket_name} does not have versioning enabled"
+                    })
+            except Exception as e:
+                logger.debug(f"Error checking bucket {bucket_name}: {str(e)}")
+    except Exception as e:
+        logger.error(f"S3 check error: {str(e)}")
+        metrics['errors'] += 1
+    return events
+
+def get_cloudtrail_security_events():
+    """Get CloudTrail security issues - CRITICAL."""
+    if not config.enable_cloudtrail_checks:
+        return []
+    events = []
+    try:
+        trails = cloudtrail_client.describe_trails().get('trailList', [])
+        if not trails:
+            events.append({
+                'type': 'CLOUDTRAIL_NO_TRAIL',
+                'severity': 'CRITICAL',
+                'resource': 'Account',
+                'description': 'CRITICAL: No CloudTrail trails configured in this region'
+            })
+        else:
+            for trail in trails:
+                trail_name = trail.get('Name')
+                # Check if trail is logging
+                status = cloudtrail_client.get_trail_status(Name=trail['TrailARN'])
+                if not status.get('IsLogging'):
+                    events.append({
+                        'type': 'CLOUDTRAIL_NOT_LOGGING',
+                        'severity': 'CRITICAL',
+                        'resource': trail_name,
+                        'description': f"CRITICAL: CloudTrail {trail_name} is not logging"
+                    })
+
+                # Check if multi-region
+                if not trail.get('IsMultiRegionTrail'):
+                    events.append({
+                        'type': 'CLOUDTRAIL_SINGLE_REGION',
+                        'severity': 'HIGH',
+                        'resource': trail_name,
+                        'description': f"CloudTrail {trail_name} is not multi-region"
+                    })
+
+                # Check log file validation
+                if not trail.get('LogFileValidationEnabled'):
+                    events.append({
+                        'type': 'CLOUDTRAIL_NO_VALIDATION',
+                        'severity': 'HIGH',
+                        'resource': trail_name,
+                        'description': f"CloudTrail {trail_name} does not have log file validation"
+                    })
+    except Exception as e:
+        logger.error(f"CloudTrail check error: {str(e)}")
+        metrics['errors'] += 1
+    return events
+
+def get_kms_security_events():
+    """Get KMS security issues."""
+    if not config.enable_kms_checks:
+        return []
+    events = []
+    try:
+        paginator = kms_client.get_paginator('list_keys')
+        for page in paginator.paginate(Limit=100):
+            for key in page.get('Keys', []):
+                key_id = key['KeyId']
+                try:
+                    metadata = kms_client.describe_key(KeyId=key_id)
+                    key_data = metadata['KeyMetadata']
+
+                    # Skip AWS managed keys
+                    if key_data.get('KeyManager') == 'AWS':
+                        continue
+
+                    # Check rotation
+                    if key_data.get('KeyState') == 'Enabled':
+                        rotation = kms_client.get_key_rotation_status(KeyId=key_id)
+                        if not rotation.get('KeyRotationEnabled'):
+                            events.append({
+                                'type': 'KMS_NO_ROTATION',
+                                'severity': 'MEDIUM',
+                                'resource': key_data.get('Arn'),
+                                'description': f"KMS key {key_data.get('Arn', key_id)} does not have automatic rotation enabled"
+                            })
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.error(f"KMS check error: {str(e)}")
+        metrics['errors'] += 1
+    return events
+
+def get_secrets_security_events():
+    """Get Secrets Manager security issues."""
+    if not config.enable_secrets_checks:
+        return []
+    events = []
+    try:
+        paginator = secretsmanager_client.get_paginator('list_secrets')
+        for page in paginator.paginate(MaxResults=100):
+            for secret in page.get('SecretList', []):
+                secret_name = secret.get('Name')
+
+                # Check rotation
+                if not secret.get('RotationEnabled'):
+                    events.append({
+                        'type': 'SECRET_NO_ROTATION',
+                        'severity': 'MEDIUM',
+                        'resource': secret_name,
+                        'description': f"Secret {secret_name} does not have automatic rotation enabled"
+                    })
+
+                # Check if secret has been accessed recently (unused secrets)
+                if secret.get('LastAccessedDate'):
+                    days_since_access = (datetime.now(timezone.utc) - secret['LastAccessedDate']).days
+                    if days_since_access > 90:
+                        events.append({
+                            'type': 'SECRET_UNUSED',
+                            'severity': 'LOW',
+                            'resource': secret_name,
+                            'description': f"Secret {secret_name} has not been accessed in {days_since_access} days"
+                        })
+    except Exception as e:
+        logger.error(f"Secrets Manager check error: {str(e)}")
+        metrics['errors'] += 1
+    return events
+
 # ============================================================================
 # EVENT FORMATTING
 # ============================================================================
@@ -409,6 +786,74 @@ def lambda_handler(event, context):
             if events:
                 msg = f"*EKS Security - {config.account_name}*\n" + "\n".join([e['description'] for e in events[:5]])
                 send_to_slack(msg, any(e['severity'] == 'HIGH' for e in events))
+
+        # CRITICAL: RDS Security Checks
+        if config.enable_rds:
+            events = get_rds_security_events()
+            if events:
+                critical_events = [e for e in events if e['severity'] == 'CRITICAL']
+                msg = f"*RDS Security - {config.account_name}*\n"
+                for event in events[:10]:
+                    msg += f"[{event['severity']}] {event['description']}\n"
+                send_to_slack(msg, len(critical_events) > 0)
+
+        # CRITICAL: Lambda Security Checks
+        if config.enable_lambda_checks:
+            events = get_lambda_security_events()
+            if events:
+                critical_events = [e for e in events if e['severity'] == 'CRITICAL']
+                msg = f"*Lambda Security - {config.account_name}*\n"
+                for event in events[:10]:
+                    msg += f"[{event['severity']}] {event['description']}\n"
+                send_to_slack(msg, len(critical_events) > 0)
+
+        # CRITICAL: IAM Security Checks
+        if config.enable_iam_checks:
+            events = get_iam_security_events()
+            if events:
+                critical_events = [e for e in events if e['severity'] == 'CRITICAL']
+                msg = f"*IAM Security - {config.account_name}*\n"
+                for event in events[:10]:
+                    msg += f"[{event['severity']}] {event['description']}\n"
+                send_to_slack(msg, len(critical_events) > 0)
+
+        # CRITICAL: S3 Security Checks
+        if config.enable_s3_checks:
+            events = get_s3_security_events()
+            if events:
+                critical_events = [e for e in events if e['severity'] == 'CRITICAL']
+                msg = f"*S3 Security - {config.account_name}*\n"
+                for event in events[:10]:
+                    msg += f"[{event['severity']}] {event['description']}\n"
+                send_to_slack(msg, len(critical_events) > 0)
+
+        # CRITICAL: CloudTrail Security Checks
+        if config.enable_cloudtrail_checks:
+            events = get_cloudtrail_security_events()
+            if events:
+                critical_events = [e for e in events if e['severity'] == 'CRITICAL']
+                msg = f"*CloudTrail Security - {config.account_name}*\n"
+                for event in events[:10]:
+                    msg += f"[{event['severity']}] {event['description']}\n"
+                send_to_slack(msg, len(critical_events) > 0)
+
+        # KMS Security Checks
+        if config.enable_kms_checks:
+            events = get_kms_security_events()
+            if events:
+                msg = f"*KMS Security - {config.account_name}*\n"
+                for event in events[:10]:
+                    msg += f"[{event['severity']}] {event['description']}\n"
+                send_to_slack(msg, False)
+
+        # Secrets Manager Checks
+        if config.enable_secrets_checks:
+            events = get_secrets_security_events()
+            if events:
+                msg = f"*Secrets Manager - {config.account_name}*\n"
+                for event in events[:10]:
+                    msg += f"[{event['severity']}] {event['description']}\n"
+                send_to_slack(msg, False)
 
         # Publish metrics
         publish_metrics()
