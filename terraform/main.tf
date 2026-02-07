@@ -27,7 +27,7 @@ resource "aws_iam_role_policy" "lambda_execution_policy" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = concat([
+    Statement = [
       {
         Effect = "Allow"
         Action = [
@@ -47,43 +47,26 @@ resource "aws_iam_role_policy" "lambda_execution_policy" {
         Resource = aws_sqs_queue.notification_queue.arn
       },
       {
-        Effect = "Allow"
-        Action = [
-          "ec2:DescribeSecurityGroups",
-          "ec2:DescribeInstances",
-          "s3:GetBucketPolicy",
-          "s3:GetBucketLocation",
-          "cloudtrail:LookupEvents",
-          "cloudwatch:PutMetricData"
-        ]
+        Effect   = "Allow"
+        Action   = ["guardduty:GetFindings", "guardduty:ListDetectors", "guardduty:ListFindings"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["securityhub:GetFindings"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["iam:GetUser", "iam:GetRole", "iam:ListUsers", "iam:ListRoles"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["cloudtrail:LookupEvents"]
         Resource = "*"
       }
-    ],
-    var.enable_guardduty ? [{
-      Effect   = "Allow"
-      Action   = ["guardduty:GetFindings", "guardduty:ListDetectors", "guardduty:ListFindings"]
-      Resource = "*"
-    }] : [],
-    var.enable_security_hub ? [{
-      Effect   = "Allow"
-      Action   = ["securityhub:GetFindings", "securityhub:BatchImportFindings"]
-      Resource = "*"
-    }] : [],
-    var.enable_config ? [{
-      Effect   = "Allow"
-      Action   = ["config:GetComplianceDetailsByConfigRule", "config:DescribeConfigRules"]
-      Resource = "*"
-    }] : [],
-    var.enable_ecs ? [{
-      Effect   = "Allow"
-      Action   = ["ecs:ListClusters", "ecs:DescribeClusters", "ecs:ListTaskDefinitions", "ecs:DescribeTaskDefinition"]
-      Resource = "*"
-    }] : [],
-    var.enable_eks ? [{
-      Effect   = "Allow"
-      Action   = ["eks:ListClusters", "eks:DescribeCluster"]
-      Resource = "*"
-    }] : [])
+    ]
   })
 }
 
@@ -133,11 +116,10 @@ resource "aws_lambda_function" "security_notification" {
       ACCOUNT_NAME             = var.account_name
       WHITELIST_RESOURCES      = join(",", var.whitelist_resources)
       CRITICAL_EVENTS          = join(",", var.critical_events)
-      ENABLE_GUARDDUTY         = var.enable_guardduty ? "true" : "false"
-      ENABLE_SECURITYHUB       = var.enable_security_hub ? "true" : "false"
-      ENABLE_CONFIG            = var.enable_config ? "true" : "false"
-      ENABLE_ECS               = var.enable_ecs ? "true" : "false"
-      ENABLE_EKS               = var.enable_eks ? "true" : "false"
+      ENABLE_GUARDDUTY         = "true"
+      ENABLE_SECURITYHUB       = "true"
+      ENABLE_IAM               = "true"
+      ENABLE_CLOUDTRAIL        = "true"
       LOG_LEVEL                = var.log_level
       MAX_RETRIES              = tostring(var.max_retries)
       RETRY_DELAY_SECONDS      = tostring(var.retry_delay_seconds)
@@ -173,16 +155,9 @@ resource "aws_cloudwatch_event_rule" "security_events" {
   event_pattern = jsonencode({
     source = [
       "aws.iam",
-      "aws.s3",
-      "aws.ec2",
       "aws.cloudtrail",
-      "aws.config",
       "aws.guardduty",
-      "aws.securityhub",
-      "aws.kms",
-      "aws.secretsmanager",
-      "aws.ecs",
-      "aws.eks"
+      "aws.securityhub"
     ]
     detail-type = [
       "AWS API Call via CloudTrail",
@@ -226,44 +201,4 @@ resource "aws_sqs_queue_policy" "notification_queue_policy" {
   })
 }
 
-# CloudWatch Alarms
-resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
-  count               = var.enable_alarms ? 1 : 0
-  alarm_name          = "${var.function_name}-errors"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = "1"
-  metric_name         = "Errors"
-  namespace           = "AWS/Lambda"
-  period              = "300"
-  statistic           = "Sum"
-  threshold           = "5"
-  alarm_description   = "This metric monitors Lambda function errors"
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    FunctionName = aws_lambda_function.security_notification.function_name
-  }
-
-  tags = var.tags
-}
-
-resource "aws_cloudwatch_metric_alarm" "dlq_messages" {
-  count               = var.enable_alarms ? 1 : 0
-  alarm_name          = "${var.function_name}-dlq-messages"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = "1"
-  metric_name         = "ApproximateNumberOfMessagesVisible"
-  namespace           = "AWS/SQS"
-  period              = "60"
-  statistic           = "Average"
-  threshold           = "0"
-  alarm_description   = "This metric monitors dead letter queue messages"
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    QueueName = aws_sqs_queue.notification_dlq.name
-  }
-
-  tags = var.tags
-}
 

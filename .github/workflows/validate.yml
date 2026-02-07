@@ -25,40 +25,18 @@ jobs:
         run: |
           source venv/bin/activate
           python -m pip install --upgrade pip
-          pip install pylint requests boto3
-
-      - name: Lint Python code
-        run: |
-          source venv/bin/activate
-          pylint src/security_notifier/ --disable=C0114,C0116,W0703 --max-line-length=120 || true
+          pip install -r requirements-dev.txt
 
       - name: Check syntax
         run: |
           source venv/bin/activate
           python -m py_compile src/security_notifier/handler.py
+          python -m py_compile src/security_notifier/checks/*.py
 
       - name: Run tests
         run: |
           source venv/bin/activate
-          pip install -r requirements-dev.txt
           make test
-
-  validate-cloudformation:
-    name: Validate CloudFormation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install cfn-lint
-        run: pip install cfn-lint
-
-      - name: Validate CloudFormation Template
-        run: cfn-lint template.yaml
 
   validate-terraform:
     name: Validate Terraform
@@ -85,19 +63,6 @@ jobs:
         run: |
           cd terraform
           terraform validate
-
-  security-scan:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run Checkov (IaC Security)
-        uses: bridgecrewio/checkov-action@master
-        with:
-          directory: .
-          framework: cloudformation,terraform
-          soft_fail: true
 
   build-package:
     name: Build Deployment Package
@@ -130,31 +95,3 @@ jobs:
           path: function.zip
           retention-days: 7
 
-  test-examples:
-    name: Test Terraform Examples
-    runs-on: ubuntu-latest
-    needs: [validate-terraform]
-    strategy:
-      matrix:
-        example: [basic, advanced]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.0
-
-      - name: Create dummy deployment package
-        run: |
-          echo "dummy" > function.zip
-
-      - name: Terraform Init
-        run: |
-          cd examples/${{ matrix.example }}
-          terraform init -backend=false
-
-      - name: Terraform Validate
-        run: |
-          cd examples/${{ matrix.example }}
-          terraform validate

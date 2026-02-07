@@ -61,29 +61,23 @@ variable "critical_events" {
 variable "enable_guardduty" {
   description = "Enable GuardDuty monitoring"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "enable_security_hub" {
   description = "Enable Security Hub monitoring"
   type        = bool
-  default     = false
+  default     = true
 }
 
-variable "enable_config" {
-  description = "Enable AWS Config monitoring"
-  type        = bool
-  default     = false
-}
-
-variable "enable_ecs" {
-  description = "Enable ECS monitoring"
+variable "enable_iam" {
+  description = "Enable IAM monitoring"
   type        = bool
   default     = true
 }
 
-variable "enable_eks" {
-  description = "Enable EKS monitoring"
+variable "enable_cloudtrail" {
+  description = "Enable CloudTrail monitoring"
   type        = bool
   default     = true
 }
@@ -134,29 +128,10 @@ variable "monitored_events" {
     "DetachRolePolicy",
     "PutBucketPolicy",
     "DeleteBucketPolicy",
-    "AuthorizeSecurityGroupIngress",
-    "AuthorizeSecurityGroupEgress",
-    "RevokeSecurityGroupIngress",
-    "RevokeSecurityGroupEgress",
-    "CreateSecurityGroup",
-    "DeleteSecurityGroup",
-    "StartLogging",
-    "StopLogging",
-    "UpdateTrail",
-    "DeleteTrail",
-    "CreateKey",
-    "DeleteKey",
-    "CreateSecret",
-    "DeleteSecret",
     "ConsoleLogin"
   ]
 }
 
-variable "enable_alarms" {
-  description = "Enable CloudWatch alarms"
-  type        = bool
-  default     = true
-}
 
 variable "additional_environment_variables" {
   description = "Additional environment variables for Lambda"

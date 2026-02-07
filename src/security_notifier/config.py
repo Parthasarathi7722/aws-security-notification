@@ -19,19 +19,11 @@ class Config:
             x.strip() for x in os.getenv("CRITICAL_EVENTS", "").split(",") if x.strip()
         ]
 
-        # Feature flags
-        self.enable_guardduty = os.getenv("ENABLE_GUARDDUTY", "false").lower() == "true"
-        self.enable_securityhub = os.getenv("ENABLE_SECURITYHUB", "false").lower() == "true"
-        self.enable_config = os.getenv("ENABLE_CONFIG", "false").lower() == "true"
-        self.enable_ecs = os.getenv("ENABLE_ECS", "true").lower() == "true"
-        self.enable_eks = os.getenv("ENABLE_EKS", "true").lower() == "true"
-        self.enable_rds = os.getenv("ENABLE_RDS", "true").lower() == "true"
-        self.enable_lambda_checks = os.getenv("ENABLE_LAMBDA_CHECKS", "true").lower() == "true"
-        self.enable_iam_checks = os.getenv("ENABLE_IAM_CHECKS", "true").lower() == "true"
-        self.enable_s3_checks = os.getenv("ENABLE_S3_CHECKS", "true").lower() == "true"
-        self.enable_cloudtrail_checks = os.getenv("ENABLE_CLOUDTRAIL_CHECKS", "true").lower() == "true"
-        self.enable_kms_checks = os.getenv("ENABLE_KMS_CHECKS", "true").lower() == "true"
-        self.enable_secrets_checks = os.getenv("ENABLE_SECRETS_CHECKS", "true").lower() == "true"
+        # Core security check flags
+        self.enable_guardduty = os.getenv("ENABLE_GUARDDUTY", "true").lower() == "true"
+        self.enable_securityhub = os.getenv("ENABLE_SECURITYHUB", "true").lower() == "true"
+        self.enable_iam = os.getenv("ENABLE_IAM", "true").lower() == "true"
+        self.enable_cloudtrail = os.getenv("ENABLE_CLOUDTRAIL", "true").lower() == "true"
 
         # Settings
         self.max_retries = int(os.getenv("MAX_RETRIES", "3"))

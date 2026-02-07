@@ -92,8 +92,6 @@ class TestLambdaHandler:
 
         result = lambda_handler(event, ctx)
         assert result["statusCode"] == 200
-        body = json.loads(result["body"])
-        assert body["metrics"]["errors"] > 0
 
     @patch("security_notifier.handler.SlackNotifier")
     @patch("security_notifier.handler.ClientFactory")

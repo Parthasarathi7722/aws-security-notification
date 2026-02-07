@@ -16,7 +16,7 @@ class SlackNotifier:
         self.config = config
         self.rate_limiter = deque(maxlen=config.rate_limit)
 
-    def send(self, message, is_critical=False, metrics=None):
+    def send(self, message, is_critical=False):
         """Send message to Slack with retry and rate limiting."""
         # Truncate long messages
         if len(message) > self.config.max_message_length:
@@ -47,8 +47,6 @@ class SlackNotifier:
                 self.rate_limiter.append(now)
 
                 if response.status_code == 200:
-                    if metrics is not None:
-                        metrics["notifications_sent"] += 1
                     return True
                 elif response.status_code == 429:
                     time.sleep(
@@ -62,6 +60,4 @@ class SlackNotifier:
                 if attempt < self.config.max_retries - 1:
                     time.sleep(self.config.retry_delay * (attempt + 1))
 
-        if metrics is not None:
-            metrics["notifications_failed"] += 1
         return False

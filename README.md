@@ -10,36 +10,32 @@ Real-time Slack notifications for AWS security events with retry logic, rate lim
 ## Features
 
 - **Real-time Alerts** - Instant Slack notifications for security events
-- **12 Security Checks** - IAM, S3, RDS, Lambda, CloudTrail, KMS, Secrets Manager, GuardDuty, Security Hub, Config, ECS, EKS
-- **Smart Retry** - Exponential backoff for failed deliveries
+- **Core Security Checks** - GuardDuty, Security Hub, IAM, CloudTrail
+- **Smart Retry Logic** - Exponential backoff for failed deliveries
 - **Rate Limiting** - Prevents Slack API throttling (30 msg/min)
 - **Event Filtering** - Whitelist support with wildcard patterns
-- **CloudWatch Metrics** - Track events, notifications, and errors
-- **Modular Architecture** - Registry-based check system, lazy client init
-- **Cost Efficient** - ~$0.84/month for 10K events
+- **Minimal Dependencies** - Only boto3 and requests
+- **Clean Architecture** - Lean, maintainable, easy to extend
 
 ## Architecture
 
 ```
 AWS Services -> EventBridge -> SQS Queue -> Lambda -> Slack
-                    |                         |
-                 Filter                  CloudWatch
-                                       (Logs + Metrics)
 ```
 
 ```
 src/security_notifier/
-  __init__.py           # expose lambda_handler, __version__
-  config.py             # Config class + helpers
+  __init__.py           # Lambda handler exposure
+  config.py             # Configuration from environment
   clients.py            # Lazy boto3 ClientFactory
-  slack.py              # SlackNotifier (send, retry, rate limiting)
-  metrics.py            # CloudWatch metrics
+  slack.py              # SlackNotifier with retry & rate limiting
   formatter.py          # Event message formatting
-  handler.py            # Lambda handler + registry orchestration
-  checks/               # One module per AWS service check
-    guardduty.py, securityhub.py, config_compliance.py,
-    ecs.py, eks.py, rds.py, lambda_check.py, iam.py,
-    s3.py, cloudtrail.py, kms.py, secrets.py
+  handler.py            # Lambda handler
+  checks/               # Core security checks
+    guardduty.py        # GuardDuty findings
+    securityhub.py      # Security Hub findings
+    iam.py              # IAM security events
+    cloudtrail.py       # CloudTrail API calls
 ```
 
 ## Quick Start
