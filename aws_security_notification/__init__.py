@@ -1,5 +1,4 @@
 # Expose the Lambda handler for library usage
-# Import the installed top-level module so this works after pip install
-import SecOps_notification as _mod
+from security_notifier.handler import lambda_handler
 
-lambda_handler = _mod.lambda_handler
+__all__ = ["lambda_handler"]

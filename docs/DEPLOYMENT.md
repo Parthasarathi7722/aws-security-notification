@@ -286,7 +286,7 @@ terraform apply
 3. **Create Lambda Function**
    - AWS Console → Lambda → Create function
    - Upload `function.zip`
-   - Handler: `SecOps_notification.lambda_handler`
+   - Handler: `security_notifier.handler.lambda_handler`
    - Runtime: Python 3.11
    - Set environment variables (see Configuration section)
 
@@ -522,7 +522,6 @@ aws cloudwatch put-metric-alarm \
 
 ---
 
-**Version**: 1.0.0  
-**Last Updated**: December 2, 2025  
+**Version**: 3.0.0
 **Status**: Production Ready
 

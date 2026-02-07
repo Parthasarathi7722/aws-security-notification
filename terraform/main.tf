@@ -124,7 +124,7 @@ resource "aws_lambda_function" "security_notification" {
   filename         = var.deployment_package_path
   function_name    = var.function_name
   role            = aws_iam_role.lambda_execution_role.arn
-  handler         = "SecOps_notification.lambda_handler"
+  handler         = "security_notifier.handler.lambda_handler"
   source_code_hash = filebase64sha256(var.deployment_package_path)
   runtime         = "python3.11"
   timeout         = var.lambda_timeout

@@ -1,6 +1,6 @@
 # Makefile for AWS Security Notification System
 
-.PHONY: help package upload deploy clean logs test
+.PHONY: help package upload deploy clean logs test validate update setup
 
 help:
 	@echo "AWS Security Notification System"
@@ -10,13 +10,20 @@ help:
 	@echo "  make upload     - Upload package to S3 (set BUCKET variable)"
 	@echo "  make deploy     - Deploy CloudFormation stack (set BUCKET and WEBHOOK)"
 	@echo "  make logs       - Tail Lambda logs"
-	@echo "  make test       - Trigger test event"
+	@echo "  make test       - Run unit tests"
 	@echo "  make clean      - Clean build artifacts"
 
 package:
 	@echo "Creating deployment package..."
-	zip -r function.zip SecOps_notification.py requests/ urllib3/ certifi/ charset_normalizer/ idna/
+	rm -rf build/
+	mkdir -p build/
+	pip install -r requirements-lambda.txt -t build/ --quiet
+	cp -r src/security_notifier build/
+	cd build && zip -r ../function.zip . -x '__pycache__/*' '*.pyc' '*.dist-info/*'
 	@echo "Package created: function.zip"
+
+test:
+	python -m pytest tests/ -v
 
 upload:
 ifndef BUCKET
@@ -48,14 +55,9 @@ logs:
 	@echo "Tailing Lambda logs (Ctrl+C to stop)..."
 	aws logs tail /aws/lambda/security-notifications-notification-lambda --follow
 
-test:
-	@echo "Triggering test event..."
-	aws iam create-user --user-name test-security-alert-$(shell date +%s) || true
-	@echo "Check Slack for notification!"
-
 clean:
 	@echo "Cleaning artifacts..."
-	rm -f function.zip
+	rm -rf function.zip build/
 	@echo "Clean complete"
 
 validate:
@@ -85,5 +87,4 @@ endif
 	make deploy BUCKET=$(BUCKET) WEBHOOK=$(WEBHOOK)
 	@echo ""
 	@echo "Setup complete!"
-	@echo "Run 'make test' to trigger a test event"
-
+	@echo "Run 'make test' to run unit tests"

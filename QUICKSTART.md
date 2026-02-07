@@ -17,7 +17,7 @@ aws s3 mb s3://my-security-notifications-$(date +%s)
 ## Step 3: Package & Upload (1 min)
 ```bash
 # Package Lambda
-zip -r function.zip SecOps_notification.py requests/ urllib3/ certifi/ charset_normalizer/ idna/
+make package
 
 # Upload
 aws s3 cp function.zip s3://YOUR_BUCKET_NAME/

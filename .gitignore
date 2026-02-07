@@ -52,3 +52,12 @@ build/
 dist/
 *.egg
 
+# Vendored dependencies (installed via pip for Lambda packaging)
+requests/
+urllib3/
+certifi/
+charset_normalizer/
+idna/
+*-dist-info/
+bin/
+

@@ -278,8 +278,8 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub ${AWS::StackName}-notification-lambda
-      Runtime: python3.9
-      Handler: SecOps_notification.lambda_handler
+      Runtime: python3.11
+      Handler: security_notifier.handler.lambda_handler
       Role: !GetAtt NotificationLambdaRole.Arn
       Code:
         S3Bucket: !Ref LambdaCodeBucket
