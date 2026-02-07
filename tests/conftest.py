@@ -11,19 +11,11 @@ def env_vars(monkeypatch):
     monkeypatch.setenv("ACCOUNT_NAME", "TestAccount")
     monkeypatch.setenv("WHITELIST_RESOURCES", "arn:aws:iam::123456789012:user/deployer")
     monkeypatch.setenv("CRITICAL_EVENTS", "CreateUser,DeleteUser")
-    # Disable all checks by default in tests
+    # Disable all core checks by default in tests
     monkeypatch.setenv("ENABLE_GUARDDUTY", "false")
     monkeypatch.setenv("ENABLE_SECURITYHUB", "false")
-    monkeypatch.setenv("ENABLE_CONFIG", "false")
-    monkeypatch.setenv("ENABLE_ECS", "false")
-    monkeypatch.setenv("ENABLE_EKS", "false")
-    monkeypatch.setenv("ENABLE_RDS", "false")
-    monkeypatch.setenv("ENABLE_LAMBDA_CHECKS", "false")
-    monkeypatch.setenv("ENABLE_IAM_CHECKS", "false")
-    monkeypatch.setenv("ENABLE_S3_CHECKS", "false")
-    monkeypatch.setenv("ENABLE_CLOUDTRAIL_CHECKS", "false")
-    monkeypatch.setenv("ENABLE_KMS_CHECKS", "false")
-    monkeypatch.setenv("ENABLE_SECRETS_CHECKS", "false")
+    monkeypatch.setenv("ENABLE_IAM", "false")
+    monkeypatch.setenv("ENABLE_CLOUDTRAIL", "false")
 
 
 @pytest.fixture
