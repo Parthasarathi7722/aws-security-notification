@@ -119,7 +119,7 @@ variable "max_message_length" {
 variable "monitored_events" {
   description = "List of AWS events to monitor"
   type        = list(string)
-  default     = [
+  default = [
     "CreateUser",
     "DeleteUser",
     "CreateRole",

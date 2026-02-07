@@ -5,7 +5,7 @@ data "aws_region" "current" {}
 
 # Lambda Execution Role
 resource "aws_iam_role" "lambda_execution_role" {
-  name               = var.lambda_role_name
+  name = var.lambda_role_name
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -74,7 +74,7 @@ resource "aws_iam_role_policy" "lambda_execution_policy" {
 resource "aws_sqs_queue" "notification_queue" {
   name                       = "${var.function_name}-queue"
   visibility_timeout_seconds = var.lambda_timeout
-  message_retention_seconds  = 1209600  # 14 days
+  message_retention_seconds  = 1209600 # 14 days
   receive_wait_time_seconds  = 20
 
   redrive_policy = jsonencode({
@@ -87,8 +87,8 @@ resource "aws_sqs_queue" "notification_queue" {
 
 # Dead Letter Queue
 resource "aws_sqs_queue" "notification_dlq" {
-  name                       = "${var.function_name}-dlq"
-  message_retention_seconds  = 1209600  # 14 days
+  name                      = "${var.function_name}-dlq"
+  message_retention_seconds = 1209600 # 14 days
 
   tags = var.tags
 }
@@ -97,12 +97,12 @@ resource "aws_sqs_queue" "notification_dlq" {
 resource "aws_lambda_function" "security_notification" {
   filename         = var.deployment_package_path
   function_name    = var.function_name
-  role            = aws_iam_role.lambda_execution_role.arn
-  handler         = "security_notifier.handler.lambda_handler"
+  role             = aws_iam_role.lambda_execution_role.arn
+  handler          = "security_notifier.handler.lambda_handler"
   source_code_hash = filebase64sha256(var.deployment_package_path)
-  runtime         = "python3.11"
-  timeout         = var.lambda_timeout
-  memory_size     = var.lambda_memory_size
+  runtime          = "python3.11"
+  timeout          = var.lambda_timeout
+  memory_size      = var.lambda_memory_size
 
   reserved_concurrent_executions = 5
 

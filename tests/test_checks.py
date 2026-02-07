@@ -2,8 +2,7 @@
 from unittest.mock import MagicMock, patch
 from botocore.exceptions import ClientError
 
-from security_notifier.checks import guardduty, securityhub, config_compliance
-from security_notifier.checks import ecs, eks, rds, lambda_check, iam, s3, cloudtrail, kms, secrets
+from security_notifier.checks import guardduty, securityhub, iam, cloudtrail
 
 
 def _mock_clients(service_returns):
