@@ -18,21 +18,28 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Create virtual environment
+        run: python -m venv venv
+
       - name: Install dependencies
         run: |
+          source venv/bin/activate
           python -m pip install --upgrade pip
           pip install pylint requests boto3
 
       - name: Lint Python code
         run: |
+          source venv/bin/activate
           pylint src/security_notifier/ --disable=C0114,C0116,W0703 --max-line-length=120 || true
 
       - name: Check syntax
         run: |
+          source venv/bin/activate
           python -m py_compile src/security_notifier/handler.py
 
       - name: Run tests
         run: |
+          source venv/bin/activate
           pip install -r requirements-dev.txt
           make test
 
@@ -42,17 +49,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          python-version: '3.11'
+
+      - name: Install cfn-lint
+        run: pip install cfn-lint
 
       - name: Validate CloudFormation Template
-        run: |
-          aws cloudformation validate-template \
-            --template-body file://template.yaml
+        run: cfn-lint template.yaml
 
   validate-terraform:
     name: Validate Terraform
@@ -113,7 +119,7 @@ jobs:
         run: |
           SIZE=$(du -h function.zip | cut -f1)
           echo "Package size: $SIZE"
-          if [ $(stat -f%z function.zip) -gt 52428800 ]; then
+          if [ $(stat -c%s function.zip) -gt 52428800 ]; then
             echo "Warning: Package size exceeds 50MB"
           fi
 
