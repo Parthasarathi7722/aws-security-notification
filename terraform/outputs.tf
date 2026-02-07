@@ -43,8 +43,4 @@ output "eventbridge_rule_arn" {
   value       = aws_cloudwatch_event_rule.security_events.arn
 }
 
-output "alarm_names" {
-  description = "Names of CloudWatch alarms (if enabled)"
-  value       = var.enable_alarms ? [aws_cloudwatch_metric_alarm.lambda_errors[0].alarm_name, aws_cloudwatch_metric_alarm.dlq_messages[0].alarm_name] : []
-}
 

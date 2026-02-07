@@ -23,7 +23,7 @@ package:
 	@echo "Package created: function.zip"
 
 test:
-	python -m pytest tests/ -v
+	PYTHONPATH=src python -m pytest tests/ -v
 
 upload:
 ifndef BUCKET
