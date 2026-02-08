@@ -1,6 +1,7 @@
 # IDE and Editor files
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
 *~
@@ -31,14 +32,6 @@ ENV/
 function.zip
 .aws-sam/
 
-# Terraform
-.terraform/
-*.tfstate
-*.tfstate.*
-.terraform.lock.hcl
-terraform.tfvars
-*.auto.tfvars
-
 # Logs
 *.log
 logs/
@@ -59,13 +52,4 @@ Thumbs.db
 build/
 dist/
 *.egg
-
-# Vendored dependencies (installed via pip for Lambda packaging)
-requests/
-urllib3/
-certifi/
-charset_normalizer/
-idna/
-*-dist-info/
-bin/
 

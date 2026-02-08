@@ -2,29 +2,6 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: 'AWS Security Event Notification Stack with EventBridge, SQS, and Lambda'
 
 Metadata:
-  AWS::ServerlessRepo::Application:
-    Name: aws-security-notification-system
-    Description: |
-      Real-time AWS security monitoring and Slack notifications for IAM, S3, EC2,
-      CloudTrail, KMS, Secrets Manager, GuardDuty, Security Hub, Config, ECS, and EKS.
-      Production-ready with comprehensive error handling and retry logic.
-    Author: ParthaDevSec
-    SpdxLicenseId: MIT
-    LicenseUrl: LICENSE
-    ReadmeUrl: README.md
-    Labels:
-      - security
-      - notifications
-      - slack
-      - cloudwatch
-      - iam
-      - compliance
-      - monitoring
-      - lambda
-      - serverless
-    HomePageUrl: https://github.com/Parthasarathi7722/aws-security-notification
-    SemanticVersion: 1.0.0
-    SourceCodeUrl: https://github.com/Parthasarathi7722/aws-security-notification
 
   AWS::CloudFormation::Interface:
     ParameterGroups:
@@ -48,6 +25,10 @@ Metadata:
         Parameters:
           - EnableGuardDuty
           - EnableSecurityHub
+          - EnableIAM
+          - EnableCloudTrail
+          - EnableS3
+          - EnableEC2
           - EnableConfig
           - EnableECS
           - EnableEKS
@@ -74,10 +55,20 @@ Metadata:
         default: "Enable GuardDuty Monitoring"
       EnableSecurityHub:
         default: "Enable Security Hub Monitoring"
+      EnableIAM:
+        default: "Enable IAM Security Monitoring"
+      EnableCloudTrail:
+        default: "Enable CloudTrail Security Monitoring"
+      EnableS3:
+        default: "Enable S3 Security Monitoring"
+      EnableEC2:
+        default: "Enable EC2 Security Monitoring"
       EnableConfig:
         default: "Enable AWS Config Monitoring"
       EnableECS:
         default: "Enable ECS Monitoring"
+      EnableEKS:
+        default: "Enable EKS Monitoring"
       EnableEKS:
         default: "Enable EKS Monitoring"
       NotificationRetentionDays:
@@ -154,6 +145,38 @@ Parameters:
       - 'true'
       - 'false'
 
+  EnableIAM:
+    Type: String
+    Description: Enable IAM security monitoring (true/false)
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableCloudTrail:
+    Type: String
+    Description: Enable CloudTrail security monitoring (true/false)
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableS3:
+    Type: String
+    Description: Enable S3 security monitoring (true/false)
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableEC2:
+    Type: String
+    Description: Enable EC2 security monitoring (true/false)
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
   EnableConfig:
     Type: String
     Description: Enable AWS Config integration (true/false)
@@ -177,6 +200,7 @@ Parameters:
     AllowedValues:
       - 'true'
       - 'false'
+
 
 Resources:
   NotificationLambdaRole:
@@ -206,10 +230,23 @@ Resources:
                 Action:
                   - ec2:DescribeSecurityGroups
                   - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - s3:ListAllMyBuckets
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:GetBucketEncryption
+                  - s3:GetBucketVersioning
+                  - s3:GetBucketLogging
                   - s3:GetBucketPolicy
                   - s3:GetBucketLocation
                   - cloudtrail:LookupEvents
                   - cloudtrail:DescribeTrails
+                  - cloudtrail:GetTrailStatus
+                  - iam:ListUsers
+                  - iam:ListMFADevices
+                  - iam:GetLoginProfile
+                  - iam:ListPolicies
+                  - iam:GetPolicyVersion
+                  - iam:ListAccessKeys
                 Resource: '*'
               - Effect: Allow
                 Action:
@@ -227,6 +264,9 @@ Resources:
                   - config:GetComplianceDetailsByConfigRule
                   - config:DescribeConfigRules
                   - config:DescribeConfigurationRecorders
+                  - config:DescribeConfigurationRecorderStatus
+                  - config:DescribeDeliveryChannels
+                  - config:DescribeComplianceByConfigRule
                 Resource: '*'
               - Effect: Allow
                 Action:
@@ -294,6 +334,10 @@ Resources:
           CRITICAL_EVENTS: !Ref CriticalEvents
           ENABLE_GUARDDUTY: !Ref EnableGuardDuty
           ENABLE_SECURITYHUB: !Ref EnableSecurityHub
+          ENABLE_IAM: !Ref EnableIAM
+          ENABLE_CLOUDTRAIL: !Ref EnableCloudTrail
+          ENABLE_S3: !Ref EnableS3
+          ENABLE_EC2: !Ref EnableEC2
           ENABLE_CONFIG: !Ref EnableConfig
           ENABLE_ECS: !Ref EnableECS
           ENABLE_EKS: !Ref EnableEKS

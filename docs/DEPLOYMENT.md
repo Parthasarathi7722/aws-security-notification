@@ -1,30 +1,28 @@
 # Deployment Guide
 
-Complete guide for deploying the AWS Security Notification System using different methods.
+Complete guide for deploying the AWS Security Notification System.
 
 ## Table of Contents
 
 1. [Overview](#overview)
 2. [Prerequisites](#prerequisites)
-3. [AWS Serverless Application Repository](#aws-sar)
-4. [CloudFormation Deployment](#cloudformation)
-5. [Terraform Deployment](#terraform)
-6. [Manual Deployment](#manual)
-7. [Post-Deployment](#post-deployment)
-8. [Troubleshooting](#troubleshooting)
+3. [CloudFormation Deployment](#cloudformation)
+4. [Terraform Deployment](#terraform)
+5. [Manual Deployment](#manual)
+6. [Post-Deployment](#post-deployment)
+7. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Overview
 
-The AWS Security Notification System can be deployed using multiple methods:
+The AWS Security Notification System can be deployed using two methods:
 
 | Method | Best For | Deployment Time | Difficulty |
 |--------|----------|-----------------|------------|
-| AWS SAR | Quick setup | 2 minutes | Easy |
-| CloudFormation | AWS-native IaC | 5 minutes | Medium |
-| Terraform | Multi-cloud IaC | 5 minutes | Medium |
-| Manual | Learning/Testing | 10 minutes | Hard |
+| CloudFormation | AWS-native IaC | 5 minutes | Easy |
+| Terraform | Multi-cloud IaC | 5 minutes | Easy |
+| Manual | Learning/Testing | 10 minutes | Medium |
 
 ---
 
@@ -34,51 +32,15 @@ The AWS Security Notification System can be deployed using multiple methods:
 
 - AWS Account with appropriate permissions
 - Slack webhook URL ([create one](https://api.slack.com/messaging/webhooks))
-
-### Optional (for CloudFormation/Terraform)
-
+- S3 bucket for Lambda deployment
 - AWS CLI installed and configured
+
+### Optional
+
 - Terraform >= 1.0 (for Terraform deployment)
-- S3 bucket (for CloudFormation deployment)
+- Git (to clone repository)
 
----
-
-## AWS Serverless Application Repository {#aws-sar}
-
-**Easiest method - One-click deployment**
-
-### Steps
-
-1. **Navigate to AWS SAR**
-   - Go to AWS Console
-   - Search for "Serverless Application Repository"
-   - Or visit: https://console.aws.amazon.com/serverlessrepo
-
-2. **Find Application**
-   - Search: `aws-security-notification-system`
-   - Or browse: Public applications → Security
-
-3. **Deploy**
-   - Click "Deploy"
-   - Enter required parameters:
-     - **SlackWebhookUrl**: Your Slack webhook URL
-     - **AccountName**: Friendly name (e.g., "Production")
-   - Enable optional services if needed
-   - Click "Deploy"
-
-4. **Wait**
-   - Deployment takes ~2 minutes
-   - Status shown in CloudFormation console
-
-5. **Done!**
-   - Check Slack for test notification
-   - Review CloudWatch Logs
-
-### Configuration
-
-After deployment via SAR, you can:
-
-- View resources in CloudFormation console
+---- View resources in CloudFormation console
 - Update parameters by updating the stack
 - Monitor via CloudWatch
 
@@ -286,7 +248,7 @@ terraform apply
 3. **Create Lambda Function**
    - AWS Console → Lambda → Create function
    - Upload `function.zip`
-   - Handler: `security_notifier.handler.lambda_handler`
+   - Handler: `SecOps_notification.lambda_handler`
    - Runtime: Python 3.11
    - Set environment variables (see Configuration section)
 
@@ -522,6 +484,7 @@ aws cloudwatch put-metric-alarm \
 
 ---
 
-**Version**: 3.0.0
+**Version**: 1.0.0  
+**Last Updated**: December 2, 2025  
 **Status**: Production Ready
 

@@ -24,6 +24,11 @@ class Config:
         self.enable_securityhub = os.getenv("ENABLE_SECURITYHUB", "true").lower() == "true"
         self.enable_iam = os.getenv("ENABLE_IAM", "true").lower() == "true"
         self.enable_cloudtrail = os.getenv("ENABLE_CLOUDTRAIL", "true").lower() == "true"
+        self.enable_s3 = os.getenv("ENABLE_S3", "true").lower() == "true"
+        self.enable_ec2 = os.getenv("ENABLE_EC2", "true").lower() == "true"
+        self.enable_ecs = os.getenv("ENABLE_ECS", "true").lower() == "true"
+        self.enable_eks = os.getenv("ENABLE_EKS", "true").lower() == "true"
+        self.enable_config = os.getenv("ENABLE_CONFIG", "true").lower() == "true"
 
         # Settings
         self.max_retries = int(os.getenv("MAX_RETRIES", "3"))

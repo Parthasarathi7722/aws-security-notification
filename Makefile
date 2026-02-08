@@ -1,9 +1,9 @@
 # Makefile for AWS Security Notification System
 
-.PHONY: help package upload deploy clean logs test validate update setup
+.PHONY: help package upload deploy clean logs test aws-test validate update setup
 
 help:
-	@echo "AWS Security Notification System"
+	@echo "AWS Security Notification System - v3.0.0"
 	@echo ""
 	@echo "Commands:"
 	@echo "  make package    - Create Lambda deployment package"
@@ -11,19 +11,27 @@ help:
 	@echo "  make deploy     - Deploy CloudFormation stack (set BUCKET and WEBHOOK)"
 	@echo "  make logs       - Tail Lambda logs"
 	@echo "  make test       - Run unit tests"
-	@echo "  make clean      - Clean build artifacts"
+	@echo "  make aws-test   - Trigger AWS test event"
+	@echo "  make clean      - Clean all build artifacts"
+	@echo "  make validate   - Validate CloudFormation template"
+	@echo "  make update     - Update Lambda code (set BUCKET)"
+	@echo "  make setup      - Complete setup (package + upload + deploy)"
 
 package:
 	@echo "Creating deployment package..."
-	rm -rf build/
-	mkdir -p build/
-	pip install -r requirements-lambda.txt -t build/ --quiet
-	cp -r src/security_notifier build/
-	cd build && zip -r ../function.zip . -x '__pycache__/*' '*.pyc' '*.dist-info/*'
-	@echo "Package created: function.zip"
-
-test:
-	PYTHONPATH=src python -m pytest tests/ -v
+	@echo "Cleaning old artifacts..."
+	rm -rf ./security_notifier ./boto3 ./botocore ./requests ./urllib3 ./certifi ./charset_normalizer ./idna ./dateutil ./jmespath ./s3transfer function.zip 2>/dev/null || true
+	@echo "Copying source code..."
+	cp -r src/security_notifier .
+	@echo "Installing dependencies..."
+	pip install -r requirements-lambda.txt -t . --upgrade --quiet 2>/dev/null || pip install boto3 requests -t . --upgrade --quiet
+	@echo "Creating deployment package..."
+	zip -r function.zip security_notifier/ -x "*.pyc" -x "*__pycache__*" -q
+	@echo "Adding dependencies..."
+	zip -r function.zip boto3/ botocore/ requests/ urllib3/ certifi/ charset_normalizer/ idna/ dateutil/ jmespath/ s3transfer/ six.py -q 2>/dev/null || true
+	@echo "Cleaning temporary files..."
+	rm -rf ./security_notifier ./boto3 ./botocore ./requests ./urllib3 ./certifi ./charset_normalizer ./idna ./dateutil ./jmespath ./s3transfer
+	@echo "✓ Package created: function.zip"
 
 upload:
 ifndef BUCKET
@@ -55,10 +63,22 @@ logs:
 	@echo "Tailing Lambda logs (Ctrl+C to stop)..."
 	aws logs tail /aws/lambda/security-notifications-notification-lambda --follow
 
+test:
+	@echo "Running unit tests..."
+	PYTHONPATH=src python3 -m pytest tests/ -v
+
+aws-test:
+	@echo "Triggering AWS test event..."
+	aws iam create-user --user-name test-security-alert-$(shell date +%s) || true
+	@echo "Check Slack for notification!"
+
 clean:
 	@echo "Cleaning artifacts..."
-	rm -rf function.zip build/
-	@echo "Clean complete"
+	rm -f function.zip
+	rm -rf security_notifier/ boto3/ botocore/ requests/ urllib3/ certifi/ charset_normalizer/ idna/ dateutil/ jmespath/ s3transfer/ six.py
+	rm -rf venv/ .pytest_cache/ __pycache__/ */__pycache__/ */*/__pycache__/
+	find . -name "*.pyc" -delete
+	@echo "✓ Clean complete"
 
 validate:
 	@echo "Validating CloudFormation template..."
@@ -87,4 +107,5 @@ endif
 	make deploy BUCKET=$(BUCKET) WEBHOOK=$(WEBHOOK)
 	@echo ""
 	@echo "Setup complete!"
-	@echo "Run 'make test' to run unit tests"
+	@echo "Run 'make test' to trigger a test event"
+
