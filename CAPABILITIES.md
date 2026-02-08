@@ -362,6 +362,8 @@ make test
 PYTHONPATH=src python -m pytest tests/ -v
 ```
 
+**Note:** Tests require dependencies to be installed (`pip install -r requirements-dev.txt`). This is handled automatically by the GitHub Actions CI/CD workflow and does not affect Lambda deployment, which uses `make package` to bundle all dependencies.
+
 ---
 
 ## Cost Estimate
