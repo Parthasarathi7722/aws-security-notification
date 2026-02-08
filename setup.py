@@ -13,7 +13,6 @@ setup(
     packages=find_packages(where="src") + ["aws_security_notification"],
     python_requires=">=3.11",
     install_requires=[
-        "requests>=2.28.0",
         "boto3>=1.26.0",
     ],
     include_package_data=True,
